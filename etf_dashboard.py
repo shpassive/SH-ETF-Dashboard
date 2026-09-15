@@ -114,7 +114,6 @@ def load_data():
     csv_url = f"https://drive.google.com/uc?export=download&id={csv_file_id}"
     excel_url = f"https://docs.google.com/spreadsheets/d/{excel_file_id}/export?format=xlsx"
     
-
     # [1] 엑셀 마스터 파일 로드
     try:
         df_excel = pd.read_excel(excel_url)
