@@ -34,7 +34,6 @@ def fetch_csvs_from_gmail():
         mail.login(gmail_user, gmail_pass)
         mail.select("inbox")
 
-        # 최근 3일 전 메일만 검색
         since_date = (datetime.datetime.now() - datetime.timedelta(days=3)).strftime("%d-%b-%Y")
         search_query = f'(SUBJECT "[KRX]" SINCE "{since_date}")'
         status, messages = mail.search(None, search_query)
@@ -104,23 +103,57 @@ def update_drive_csv(df, file_id):
         st.error(f"구글 드라이브 업데이트 실패: {e}")
 
 # ----------------------------------------------------------------------
-# 3. 메인 데이터 로드 및 전처리
+# 3. 메인 데이터 로드 및 전처리 (401 우회 및 자동 교체 처리)
 # ----------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data():
     csv_file_id = "1aJ5x-GYsdZzNOwmsV0RBDObWxBV-8Hcb"
     excel_file_id = "1xdKEXMRXf0TECNRvUedJ4jU9Pz29cRo4"
 
-    csv_url = f"https://drive.google.com/uc?export=download&id={csv_file_id}"
-    excel_url = f"https://docs.google.com/spreadsheets/d/{excel_file_id}/export?format=xlsx"
-    
-    # [1] 엑셀 마스터 파일 로드
-    try:
-        df_excel = pd.read_excel(excel_url)
-    except Exception as e:
-        st.error(f"엑셀 마스터 로드 오류: {e}")
-        return pd.DataFrame(), {}
+    df_excel = None
+    df_base = None
 
+    # [1-A] 서비스 계정(GCP API) 권한으로 접근 시도 (401 에러 방지)
+    if "gcp_service_account" in st.secrets:
+        try:
+            creds_info = dict(st.secrets["gcp_service_account"])
+            credentials = service_account.Credentials.from_service_account_info(
+                creds_info, scopes=['https://www.googleapis.com/auth/drive']
+            )
+            service = build('drive', 'v3', credentials=credentials)
+
+            # 엑셀 다운로드 (구글 웹문서 vs 일반 .xlsx 자동 판별)
+            try:
+                request = service.files().export_media(fileId=excel_file_id, mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                excel_bytes = io.BytesIO(request.execute())
+            except:
+                request = service.files().get_media(fileId=excel_file_id)
+                excel_bytes = io.BytesIO(request.execute())
+            df_excel = pd.read_excel(excel_bytes)
+
+            # CSV 다운로드
+            request_csv = service.files().get_media(fileId=csv_file_id)
+            csv_bytes = io.BytesIO(request_csv.execute())
+            df_base = pd.read_csv(csv_bytes, encoding='cp949', thousands=',')
+        except Exception as e:
+            pass
+
+    # [1-B] 서비스 계정 로드 실패 시 URL 접근 방식으로 전환 (Fallback)
+    if df_excel is None:
+        try:
+            excel_url = f"https://docs.google.com/spreadsheets/d/{excel_file_id}/export?format=xlsx"
+            df_excel = pd.read_excel(excel_url)
+        except:
+            excel_url = f"https://drive.google.com/uc?export=download&id={excel_file_id}"
+            df_excel = pd.read_excel(excel_url)
+
+    if df_base is None:
+        csv_url = f"https://drive.google.com/uc?export=download&id={csv_file_id}"
+        df_base = pd.read_csv(csv_url, encoding='cp949', thousands=',')
+
+    base_row_count = len(df_base)
+
+    # 마스터 데이터 맵핑
     master_db = {}
     for _, row in df_excel.iterrows():
         std_code = str(row.iloc[0]).strip().upper().replace(" ", "")
@@ -151,21 +184,12 @@ def load_data():
             'is_rep': is_rep, 'deriv': deriv, 'tracking': tracking, 'category_key': cat_key, 'amc': amc
         }
 
-    # [2] 원본 CSV 실적 파일 로드
-    try:
-        df_base = pd.read_csv(csv_url, encoding='cp949', thousands=',')
-        base_row_count = len(df_base)
-    except Exception as e:
-        st.error(f"CSV 실적 로드 오류: {e}")
-        return pd.DataFrame(), {}
-
-    # [3] 지메일 첨부파일 가져오기
+    # 지메일 수신
     try:
         df_gmail = fetch_csvs_from_gmail()
     except:
         df_gmail = pd.DataFrame()
 
-    # [4] 데이터 병합
     if not df_gmail.empty:
         df = pd.concat([df_base, df_gmail], ignore_index=True)
     else:
@@ -173,28 +197,26 @@ def load_data():
 
     df = df[df['상품그룹ID'].str.upper() == 'ETF'].copy()
 
-    # [5] 💡 핵심 정제: 모든 종류의 날짜 포맷(하이픈, 점, 슬래시, 소수점)을 8자리 순수 숫자로 강력 변환
+    # 날짜 강력 정제
     clean_date_str = (
         df['거래일자']
         .astype(str)
-        .str.replace(r'\.0$', '', regex=True)  # float형 뒤 .0 제거
-        .str.replace(r'\D', '', regex=True)   # 하이픈(-), 점(.), 슬래시(/) 등 숫자가 아닌 모든 특수문자 제거
+        .str.replace(r'\.0$', '', regex=True)
+        .str.replace(r'\D', '', regex=True)
         .str.strip()
     )
-    
-    # datetime 객체로 확실히 변환 (변환 실패 건은 NaT 처리)
     df['거래일자'] = pd.to_datetime(clean_date_str, format='%Y%m%d', errors='coerce')
     df = df.dropna(subset=['거래일자']).copy()
 
-    # [6] 중복 데이터 제거
+    # 중복 제거
     df = df.drop_duplicates(subset=['거래일자', '종목코드', '회원사명'], keep='last').reset_index(drop=True)
 
-    # [7] 구글 드라이브 원본 파일 업데이트 (신규 행이 추가된 경우)
+    # 드라이브 업데이트
     if len(df) > base_row_count:
         if "gcp_service_account" in st.secrets:
             update_drive_csv(df, csv_file_id)
 
-    # [8] 거래대금/수량 전처리
+    # 수치 및 카테고리 맵핑
     df['LP매도거래대금'] = df['LP매도거래대금'].fillna(0)
     df['LP매수거래대금'] = df['LP매수거래대금'].fillna(0)
     if 'LP매도거래량' in df.columns: df['LP매도거래량'] = df['LP매도거래량'].fillna(0)
@@ -203,7 +225,6 @@ def load_data():
     df['총LP거래대금'] = df['LP매도거래대금'] + df['LP매수거래대금']
     df['LP순매수대금'] = df['LP매수거래대금'] - df['LP매도거래대금']
 
-    # [9] 마스터 DB 맵핑
     master_df = pd.DataFrame.from_dict(master_db, orient='index')
     df['종목코드'] = df['종목코드'].str.strip().str.upper().str.replace(' ', '')
     df['a_code'] = df['종목코드'].map(master_df['a_code']).fillna(df['종목코드'])
@@ -225,11 +246,10 @@ if df.empty:
 
 
 # ----------------------------------------------------------------------
-# 사이드바 (Global Date Filter - 안전한 날짜 추출 적용)
+# 사이드바 (Global Date Filter)
 # ----------------------------------------------------------------------
 st.sidebar.header("🗓️ 데이터 기간 설정")
 
-# 날짜 추출 시 예외 방지 안전 로직
 min_val = df['거래일자'].min()
 max_val = df['거래일자'].max()
 
