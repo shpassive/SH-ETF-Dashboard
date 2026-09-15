@@ -108,11 +108,12 @@ def update_drive_csv(df, file_id):
 # ----------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data():
-    csv_file_id = "14q4_DyFiyNqm9HrIwvCTnRNIfzM2Y1BY"
-    excel_file_id = "1gHKN8CcXch1s3L-O8XOac98uh2c8Lq4N"
+    csv_file_id = "1aJ5x-GYsdZzNOwmsV0RBDObWxBV-8Hcb"
+    excel_file_id = "1xdKEXMRXf0TECNRvUedJ4jU9Pz29cRo4"
 
     csv_url = f"https://drive.google.com/uc?export=download&id={csv_file_id}"
     excel_url = f"https://docs.google.com/spreadsheets/d/{excel_file_id}/export?format=xlsx"
+    
 
     # [1] 엑셀 마스터 파일 로드
     try:
