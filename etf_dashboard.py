@@ -8,6 +8,7 @@ from email.header import decode_header
 import zipfile
 import io
 import datetime
+import time  # 밴 방지용 딜레이를 위한 모듈
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -15,7 +16,7 @@ from googleapiclient.http import MediaIoBaseUpload
 # ----------------------------------------------------------------------
 # 페이지 기본 설정
 # ----------------------------------------------------------------------
-st.set_page_config(page_title="ETF Market Monitoring (v7.0)", layout="wide")
+st.set_page_config(page_title="ETF Market Monitoring (v7.1)", layout="wide")
 st.title("📊 ETF Market Monitoring Dashboard (통합판)")
 
 # ----------------------------------------------------------------------
@@ -228,7 +229,6 @@ def load_data():
 
     return df, master_db
 
-
 df, master_db = load_data()
 if df.empty:
     st.error("⚠️ 데이터 로드에 실패하였거나 표시할 ETF 데이터가 없습니다.")
@@ -262,12 +262,48 @@ df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'
 
 
 # ----------------------------------------------------------------------
+# 💡 [안전 강화] pykrx 수신 전용 캐시 함수 (밴 방지 설계)
+# ----------------------------------------------------------------------
+@st.cache_data(ttl=14400, show_spinner=False)  # 4시간(14400초) 캐싱
+def get_pykrx_market_data_safe(tickers_tuple, start_str, end_str):
+    from pykrx import stock
+    import pandas as pd
+    
+    all_data = []
+    
+    # 여러 종목을 한 번에 요청하면 밴(Ban) 당할 수 있으므로, 하나씩 0.5초 간격으로 요청
+    for ticker in tickers_tuple:
+        try:
+            # KRX 시장 데이터 호출 (시가,고가,저가,종가,거래량,거래대금 반환)
+            df = stock.get_market_ohlcv(start_str, end_str, ticker)
+            
+            if not df.empty and '거래대금' in df.columns:
+                df = df[['거래대금']].copy()
+                df.columns = [ticker] # 해당 티커 이름으로 컬럼명 변경
+                all_data.append(df)
+        except Exception:
+            pass
+        
+        # 🚨 [핵심] KRX IP 밴 방지를 위한 강제 딜레이
+        time.sleep(0.5)
+
+    if all_data:
+        # 리스트에 모인 각 티커별 거래대금 데이터프레임을 날짜(Index) 기준으로 합치기
+        merged_df = pd.concat(all_data, axis=1).fillna(0)
+        # 날짜별로 모든 티커의 거래대금을 총합
+        total_market_val = merged_df.sum(axis=1).to_frame(name='시장거래대금')
+        return total_market_val
+    else:
+        return pd.DataFrame()
+
+
+# ----------------------------------------------------------------------
 # UI Tabs 구성
 # ----------------------------------------------------------------------
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "1. 종합 대시보드", "2. ETF 구분별 분석", "3. LP사 다각도 분석", 
     "4. ETF별 주력 LP 분석", "5. 운용사별 주력 ETF 분석",
-    "6. 종목 집중도 분석", "7. 시장 전체 거래대금 (Yahoo)"
+    "6. 종목 집중도 분석", "7. 시장 전체 거래대금 (KRX)"
 ])
 
 # ==========================================
@@ -379,7 +415,7 @@ with tab1:
             st.plotly_chart(fig_t, use_container_width=True)
 
 # ==========================================
-# Tab 2~6 (이전과 동일하게 유지)
+# Tab 2~6 (동일 유지)
 # ==========================================
 with tab2:
     st.subheader("📈 ETF 섹터 필터링을 통한 점유율 및 성향 분석")
@@ -739,11 +775,11 @@ with tab6:
     )
 
 # ==========================================
-# Tab 7: 시장 전체 거래대금 (Yahoo)
+# Tab 7: 시장 전체 거래대금 (KRX - pykrx)
 # ==========================================
 with tab7:
-    st.subheader("🌐 시장 전체 거래대금 추이 (야후 파이낸스 연동)")
-    st.write("선택한 ETF 섹터의 **시장 전체 거래대금(거래량 × 수정주가)** 추이를 분석하고, LP 거래대금과의 비율(**LP 관여율**)을 확인합니다.")
+    st.subheader("🇰🇷 KRX 공식 시장 거래대금 분석 (pykrx 연동)")
+    st.write("선택한 ETF 섹터의 **KRX 공식 전체 거래대금**을 조회하고, LP 거래대금과의 비율(**LP 관여율**)을 정확하게 분석합니다.")
 
     # 5개 섹터 필터링 UI
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -761,49 +797,49 @@ with tab7:
     if drv_filter_t7 != "전체": df_t7 = df_t7[df_t7['deriv'] == drv_filter_t7]
     if trk_filter_t7 != "전체": df_t7 = df_t7[df_t7['tracking'] == trk_filter_t7]
     
-    target_etfs = df_t7['a_code'].unique()
-    st.info(f"선택된 필터에 해당하는 ETF 종목 수: **{len(target_etfs)} 개**")
+    # pykrx 과부하(차단) 방지를 위한 최대 50개 제한 로직
+    top_etfs_series = df_t7.groupby('a_code')['총LP거래대금'].sum().sort_values(ascending=False)
+    target_etfs = top_etfs_series.head(50).index.tolist()
+    total_found_cnt = df_t7['a_code'].nunique()
     
-    # 버튼 클릭 시에만 야후 파이낸스 호출 (API 과부하 방지)
-    if st.button("📊 야후 파이낸스 데이터로 추이 분석하기", type="primary"):
+    if total_found_cnt > 50:
+        st.info(f"💡 필터 조건 해당 종목: 총 **{total_found_cnt}개** (API 밴 방지 및 속도를 위해 LP 거래대금 **상위 50개 종목**의 시장 데이터만 합산합니다.)")
+    else:
+        st.info(f"선택된 필터에 해당하는 ETF 종목 수: **{total_found_cnt} 개**")
+    
+    if st.button("📊 KRX 데이터로 정확한 추이 분석하기", type="primary"):
         if len(target_etfs) == 0:
             st.warning("선택된 종목이 없습니다. 필터를 변경해주세요.")
         else:
-            with st.spinner("야후 파이낸스에서 시장 데이터를 가져오는 중입니다... (선택 종목이 많을 경우 10~30초가량 소요될 수 있습니다)"):
+            # 딜레이(time.sleep)로 인해 소요시간이 걸릴 수 있음을 안내
+            estimated_time = len(target_etfs) * 0.5
+            with st.spinner(f"KRX에서 정확한 거래대금 데이터를 안전하게 불러오는 중입니다... (예상 소요시간: 약 {estimated_time:.0f}초)"):
                 try:
-                    import yfinance as yf
+                    # pykrx는 '069500' 처럼 A가 없는 6자리 코드를 사용
+                    tickers = tuple([code.replace('A', '') for code in target_etfs])
                     
-                    # 'A069500' -> '069500.KS' 포맷 변환
-                    tickers = [code.replace('A', '') + '.KS' for code in target_etfs]
+                    # 날짜 포맷은 YYYYMMDD
+                    start_str = start_date.strftime('%Y%m%d')
+                    end_str = end_date.strftime('%Y%m%d')
                     
-                    # 야후 파이낸스는 end date 데이터를 포함하지 않으므로 하루를 더해줌
-                    yf_start = start_date.strftime('%Y-%m-%d')
-                    yf_end = (end_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+                    # 💡 캐싱된 함수를 호출하여 동일 요청 시 바로 결과를 리턴하도록 처리
+                    daily_market_val = get_pykrx_market_data_safe(tickers, start_str, end_str)
                     
-                    # yfinance 다운로드 (progress=False로 터미널 지저분해짐 방지)
-                    yf_data = yf.download(tickers, start=yf_start, end=yf_end, progress=False)
-                    
-                    if yf_data.empty:
-                        st.error("데이터를 불러오지 못했습니다. 해당 기간에 거래일이 없거나 종목 코드가 유효하지 않을 수 있습니다.")
+                    if daily_market_val.empty:
+                        st.error("데이터를 불러오지 못했습니다. 해당 기간에 거래일이 없거나 통신이 원활하지 않습니다.")
                     else:
-                        # 종목이 1개일 때와 여러 개일 때 DataFrame 구조(MultiIndex)가 달라지는 것 처리
-                        if len(tickers) == 1:
-                            daily_market_val = yf_data['Adj Close'] * yf_data['Volume']
-                            daily_market_val = daily_market_val.to_frame(name='시장거래대금')
-                        else:
-                            # 각 종목별 (수정주가 * 거래량)을 계산 후 일자별로 총합(sum) 계산
-                            daily_market_val = (yf_data['Adj Close'] * yf_data['Volume']).sum(axis=1).to_frame(name='시장거래대금')
-                        
                         daily_market_val.index = pd.to_datetime(daily_market_val.index).date
+                        # pykrx의 '거래대금'은 원(KRW) 단위이므로 1억 원으로 나눔
                         daily_market_val['시장거래대금(억)'] = daily_market_val['시장거래대금'] / 100_000_000
                         
-                        # 기존 KRX 데이터의 LP 총 거래대금과 날짜별 병합
+                        # 기존 LP 데이터 합산
                         lp_daily = df_t7.groupby(df_t7['거래일자'].dt.date)['총LP거래대금'].sum().to_frame(name='LP거래대금')
                         lp_daily['LP거래대금(억)'] = lp_daily['LP거래대금'] / 100_000_000
                         
+                        # 데이터 병합
                         merged_df = daily_market_val.join(lp_daily, how='outer').fillna(0)
                         
-                        # LP 관여율(%) 계산 = (LP거래대금 / 시장전체거래대금) * 100
+                        # LP 관여율(%) 계산 = (LP총거래대금 / 시장전체거래대금) * 100
                         merged_df['LP관여율(%)'] = np.where(
                             merged_df['시장거래대금'] > 0, 
                             (merged_df['LP거래대금'] / merged_df['시장거래대금']) * 100, 
@@ -814,7 +850,7 @@ with tab7:
                         # 차트 1: 시장 거래대금 vs LP 거래대금 (선 차트)
                         fig_t7 = px.line(
                             merged_df, x='날짜', y=['시장거래대금(억)', 'LP거래대금(억)'],
-                            title="시장 전체 거래대금 vs LP 총 거래대금 추이 (단위: 억원)",
+                            title="선택 섹터 시장 전체 거래대금 vs LP 총 거래대금 추이 (단위: 억원)",
                             markers=True,
                             labels={'value': '거래대금(억)', 'variable': '구분'}
                         )
@@ -823,7 +859,7 @@ with tab7:
                         # 차트 2: LP 관여율 (막대 차트)
                         fig_t7_ratio = px.bar(
                             merged_df, x='날짜', y='LP관여율(%)',
-                            title="시장 거래대금 대비 LP 관여율 (%)",
+                            title="KRX 공식 시장 거래대금 대비 LP 관여율 (%)",
                             text=merged_df['LP관여율(%)'].apply(lambda x: f"{x:.1f}%"),
                             color_discrete_sequence=['#ff9f43']
                         )
@@ -839,7 +875,5 @@ with tab7:
                             }), use_container_width=True, hide_index=True
                         )
                 
-                except ImportError:
-                    st.error("🚨 `yfinance` 라이브러리가 설치되어 있지 않습니다. `requirements.txt`에 `yfinance`를 추가해주세요.")
                 except Exception as e:
-                    st.error(f"야후 파이낸스 데이터 처리 중 오류가 발생했습니다: {e}")
+                    st.error(f"KRX 데이터 처리 중 오류가 발생했습니다: {e}")
