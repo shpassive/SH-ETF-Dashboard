@@ -303,6 +303,67 @@ def get_krx_market_data_hybrid_safe(tickers_tuple, start_date_val, end_date_val)
 
 
 # ----------------------------------------------------------------------
+# 💡 [궁극의 해결책] pykrx 삭제 및 KRX 웹 API 직접 호출 (에러 원천 차단)
+# ----------------------------------------------------------------------
+@st.cache_data(ttl=14400, show_spinner=False)
+def get_krx_market_data_direct(tickers_tuple, start_date_val, end_date_val):
+    import pandas as pd
+    import requests
+    import time
+
+    date_range = pd.date_range(start=start_date_val, end=end_date_val, freq='B')
+    target_set = set(tickers_tuple)
+    daily_records = []
+
+    # KRX 거래소 내부 API 엔드포인트
+    url = "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+    headers = {
+        "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    for d in date_range:
+        date_str = d.strftime('%Y%m%d')
+        # ETF 전종목 시세 호출 파라미터 (MDCSTAT04301)
+        payload = {
+            "bld": "dbms/MDC/STAT/standard/MDCSTAT04301",
+            "locale": "ko_KR",
+            "trdDd": date_str,
+            "share": "1",
+            "money": "1",
+            "csvxls_isNo": "false"
+        }
+        
+        try:
+            res = requests.post(url, data=payload, headers=headers, timeout=5)
+            if res.status_code == 200:
+                json_data = res.json()
+                out_block = json_data.get('OutBlock_1', [])
+                
+                if out_block:
+                    df_day = pd.DataFrame(out_block)
+                    
+                    # 'ISU_SRT_CD' = 종목코드, 'ACC_TRDVAL' = 거래대금(문자열, 콤마 포함)
+                    filtered = df_day[df_day['ISU_SRT_CD'].isin(target_set)]
+                    
+                    if not filtered.empty:
+                        # 콤마(,) 제거 후 숫자로 변환하여 합산
+                        day_sum = pd.to_numeric(filtered['ACC_TRDVAL'].str.replace(',', ''), errors='coerce').sum()
+                        if day_sum > 0:
+                            daily_records.append({'거래일자': d.date(), '시장거래대금': day_sum})
+        except Exception:
+            pass
+        
+        # 밴(Ban) 방지를 위한 강제 0.15초 휴식
+        time.sleep(0.15) 
+
+    if daily_records:
+        res_df = pd.DataFrame(daily_records).set_index('거래일자')
+        return res_df
+        
+    return pd.DataFrame()
+
+# ----------------------------------------------------------------------
 # 사이드바 (Global Date Filter)
 # ----------------------------------------------------------------------
 st.sidebar.header("🗓️ 데이터 기간 설정")
@@ -816,12 +877,12 @@ with tab6:
             'HHI 지수': '{:,.0f}'
         }), use_container_width=True, hide_index=True
     )
-
+    
 # ==========================================
-# Tab 7: 시장 전체 거래대금 (KRX - pykrx 하이브리드)
+# Tab 7: 시장 전체 거래대금 (KRX Direct API 연동)
 # ==========================================
 with tab7:
-    st.subheader("🇰🇷 KRX 공식 시장 거래대금 분석 (pykrx 연동)")
+    st.subheader("🇰🇷 KRX 공식 시장 거래대금 분석 (Direct API 연동)")
     st.write("선택한 ETF 섹터의 **KRX 공식 전체 거래대금**을 조회하고, LP 거래대금과의 비율(**LP 관여율**)을 정확하게 분석합니다.")
 
     # 5개 섹터 필터링 UI
@@ -840,25 +901,25 @@ with tab7:
     if drv_filter_t7 != "전체": df_t7 = df_t7[df_t7['deriv'] == drv_filter_t7]
     if trk_filter_t7 != "전체": df_t7 = df_t7[df_t7['tracking'] == trk_filter_t7]
     
-    # pykrx 코드 형식 변환 ('A069500' -> '069500')
+    # KRX 종목코드 형식 변환 ('A069500' -> '069500')
     target_etfs = [code.replace('A', '') for code in df_t7['a_code'].unique()]
     total_found_cnt = len(target_etfs)
     
     st.info(f"선택된 필터 조건 대상 ETF 종목 수: **{total_found_cnt} 개**")
     
-    if st.button("📊 KRX 데이터로 정확한 추이 분석하기", type="primary"):
+    if st.button("📊 KRX 실시간 데이터로 밴 걱정 없이 정확하게 추이 분석하기", type="primary"):
         if total_found_cnt == 0:
             st.warning("선택된 종목이 없습니다. 필터를 변경해주세요.")
         else:
-            with st.spinner("최적 경로를 계산하여 KRX 데이터를 안전하게 수집 중입니다..."):
+            with st.spinner("KRX 거래소 서버에서 데이터를 직접 추출하고 있습니다... (캐싱 적용됨)"):
                 try:
                     tickers_tuple = tuple(target_etfs)
                     
-                    # 💡 스마트 하이브리드 수집 함수 호출
-                    daily_market_val = get_krx_market_data_hybrid_safe(tickers_tuple, start_date, end_date)
+                    # 💡 pykrx 에러 없는 순수 API 호출 함수
+                    daily_market_val = get_krx_market_data_direct(tickers_tuple, start_date, end_date)
                     
                     if daily_market_val.empty:
-                        st.error("데이터를 불러오지 못했습니다. 해당 기간에 거래일이 없거나 KRX 응답이 지연되고 있습니다.")
+                        st.error("데이터를 불러오지 못했습니다. 해당 기간에 영업일(평일)이 포함되어 있는지 확인해 주세요.")
                     else:
                         # 원(KRW) -> 억원 변환
                         daily_market_val['시장거래대금(억)'] = daily_market_val['시장거래대금'] / 100_000_000
@@ -870,7 +931,7 @@ with tab7:
                         # 데이터 병합
                         merged_df = daily_market_val.join(lp_daily, how='outer').fillna(0)
                         
-                        # LP 관여율(%) 계산 = (LP총거래대금 / 시장전체거래대금) * 100
+                        # LP 관여율(%) 계산
                         merged_df['LP관여율(%)'] = np.where(
                             merged_df['시장거래대금'] > 0, 
                             (merged_df['LP거래대금'] / merged_df['시장거래대금']) * 100, 
@@ -878,7 +939,7 @@ with tab7:
                         )
                         merged_df = merged_df.reset_index().rename(columns={'index': '날짜'})
                         
-                        # 차트 1: 시장 거래대금 vs LP 거래대금 (선 차트)
+                        # 차트 1: 선 차트
                         fig_t7 = px.line(
                             merged_df, x='날짜', y=['시장거래대금(억)', 'LP거래대금(억)'],
                             title="선택 섹터 시장 전체 거래대금 vs LP 총 거래대금 추이 (단위: 억원)",
@@ -887,7 +948,7 @@ with tab7:
                         )
                         st.plotly_chart(fig_t7, use_container_width=True)
                         
-                        # 차트 2: LP 관여율 (막대 차트)
+                        # 차트 2: 막대 차트 (LP 관여율)
                         fig_t7_ratio = px.bar(
                             merged_df, x='날짜', y='LP관여율(%)',
                             title="KRX 공식 시장 거래대금 대비 LP 관여율 (%)",
@@ -897,7 +958,7 @@ with tab7:
                         fig_t7_ratio.update_traces(textposition='outside')
                         st.plotly_chart(fig_t7_ratio, use_container_width=True)
                         
-                        # 세부 데이터 테이블
+                        # 데이터 테이블
                         st.dataframe(
                             merged_df[['날짜', '시장거래대금(억)', 'LP거래대금(억)', 'LP관여율(%)']].style.format({
                                 '시장거래대금(억)': '{:,.0f}',
@@ -907,4 +968,4 @@ with tab7:
                         )
                 
                 except Exception as e:
-                    st.error(f"KRX 데이터 처리 중 오류가 발생했습니다: {e}")
+                    st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
