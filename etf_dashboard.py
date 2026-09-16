@@ -113,7 +113,6 @@ def load_data():
     df_excel = None
     df_base = None
 
-    # [1-A] 서비스 계정(GCP API) 권한으로 접근 시도 (401 에러 방지)
     if "gcp_service_account" in st.secrets:
         try:
             creds_info = dict(st.secrets["gcp_service_account"])
@@ -122,7 +121,6 @@ def load_data():
             )
             service = build('drive', 'v3', credentials=credentials)
 
-            # 엑셀 다운로드 (구글 웹문서 vs 일반 .xlsx 자동 판별)
             try:
                 request = service.files().export_media(fileId=excel_file_id, mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
                 excel_bytes = io.BytesIO(request.execute())
@@ -131,14 +129,12 @@ def load_data():
                 excel_bytes = io.BytesIO(request.execute())
             df_excel = pd.read_excel(excel_bytes)
 
-            # CSV 다운로드
             request_csv = service.files().get_media(fileId=csv_file_id)
             csv_bytes = io.BytesIO(request_csv.execute())
             df_base = pd.read_csv(csv_bytes, encoding='cp949', thousands=',')
         except Exception as e:
             pass
 
-    # [1-B] 서비스 계정 로드 실패 시 URL 접근 방식으로 전환 (Fallback)
     if df_excel is None:
         try:
             excel_url = f"https://docs.google.com/spreadsheets/d/{excel_file_id}/export?format=xlsx"
@@ -153,7 +149,6 @@ def load_data():
 
     base_row_count = len(df_base)
 
-    # 마스터 데이터 맵핑
     master_db = {}
     for _, row in df_excel.iterrows():
         std_code = str(row.iloc[0]).strip().upper().replace(" ", "")
@@ -184,7 +179,6 @@ def load_data():
             'is_rep': is_rep, 'deriv': deriv, 'tracking': tracking, 'category_key': cat_key, 'amc': amc
         }
 
-    # 지메일 수신
     try:
         df_gmail = fetch_csvs_from_gmail()
     except:
@@ -197,7 +191,6 @@ def load_data():
 
     df = df[df['상품그룹ID'].str.upper() == 'ETF'].copy()
 
-    # 날짜 강력 정제
     clean_date_str = (
         df['거래일자']
         .astype(str)
@@ -208,15 +201,12 @@ def load_data():
     df['거래일자'] = pd.to_datetime(clean_date_str, format='%Y%m%d', errors='coerce')
     df = df.dropna(subset=['거래일자']).copy()
 
-    # 중복 제거
     df = df.drop_duplicates(subset=['거래일자', '종목코드', '회원사명'], keep='last').reset_index(drop=True)
 
-    # 드라이브 업데이트
     if len(df) > base_row_count:
         if "gcp_service_account" in st.secrets:
             update_drive_csv(df, csv_file_id)
 
-    # 수치 및 카테고리 맵핑
     df['LP매도거래대금'] = df['LP매도거래대금'].fillna(0)
     df['LP매수거래대금'] = df['LP매수거래대금'].fillna(0)
     if 'LP매도거래량' in df.columns: df['LP매도거래량'] = df['LP매도거래량'].fillna(0)
@@ -286,6 +276,32 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.subheader("📊 시장 핵심 지표 및 추이 (KPI)")
 
+    # --- 💡 수정된 부분: 분석 관점 필터를 최상단으로 이동 ---
+    trend_type = st.radio(
+        "🔍 데이터 필터링 관점 선택 (아래 모든 지표에 적용됩니다)", 
+        ["시장 전체 (Total Market)", "특정 LP사 (Specific LP)", "특정 운용사 (Specific AMC)"], 
+        horizontal=True, 
+        key='t1_trend'
+    )
+
+    target_lps = []
+    target_amcs = []
+
+    if trend_type == "특정 LP사 (Specific LP)":
+        # 빈 화면 방지를 위해 거래대금 기준 1위 LP사를 기본값으로 세팅
+        top_lp = df_filtered.groupby('회원사명')['총LP거래대금'].sum().idxmax() if not df_filtered.empty else None
+        target_lps = st.multiselect("비교 분석할 LP사 선택 (다중 선택 가능)", sorted(df_filtered['회원사명'].unique()), default=[top_lp] if top_lp else None, key='t1_lp_sel')
+    
+    elif trend_type == "특정 운용사 (Specific AMC)":
+        # 빈 화면 방지를 위해 거래대금 기준 1위 운용사를 기본값으로 세팅
+        amc_list = sorted([a for a in df_filtered['amc'].unique() if a != '미분류'])
+        top_amc = df_filtered[df_filtered['amc'] != '미분류'].groupby('amc')['총LP거래대금'].sum().idxmax() if not df_filtered.empty else None
+        target_amcs = st.multiselect("비교 분석할 운용사 선택 (다중 선택 가능)", amc_list, default=[top_amc] if top_amc else None, key='t1_amc_sel')
+
+    st.divider()
+    
+    # 기존 ETF 세부 속성 필터 (5분할)
+    st.write("▼ ETF 섹터 세부 필터")
     c1, c2, c3, c4, c5 = st.columns(5)
     mkt_filter_t1 = c1.selectbox("국내/해외", ["전체"] + list(df_filtered['market'].unique()), key='t1_mkt')
     ast_filter_t1 = c2.selectbox("주식/그외", ["전체"] + list(df_filtered['asset'].unique()), key='t1_ast')
@@ -293,6 +309,7 @@ with tab1:
     drv_filter_t1 = c4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t1_drv')
     trk_filter_t1 = c5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t1_trk')
 
+    # 데이터 복사 및 필터 적용 (섹터 필터)
     df_t1 = df_filtered.copy()
     if mkt_filter_t1 != "전체": df_t1 = df_t1[df_t1['market'] == mkt_filter_t1]
     if ast_filter_t1 != "전체": df_t1 = df_t1[df_t1['asset'] == ast_filter_t1]
@@ -300,57 +317,72 @@ with tab1:
     if drv_filter_t1 != "전체": df_t1 = df_t1[df_t1['deriv'] == drv_filter_t1]
     if trk_filter_t1 != "전체": df_t1 = df_t1[df_t1['tracking'] == trk_filter_t1]
 
-    total_amt = df_t1['총LP거래대금'].sum() / 100_000_000
-    unique_days = df_t1['거래일자'].nunique()
-    daily_avg = total_amt / unique_days if unique_days > 0 else 0
-    active_etf_cnt = df_t1[df_t1['총LP거래대금'] > 0]['종목코드'].nunique()
-    active_lp_cnt = df_t1[df_t1['총LP거래대금'] > 0]['회원사명'].nunique()
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("기간 총 거래대금", f"{total_amt:,.0f} 억원")
-    col2.metric("일평균 거래대금", f"{daily_avg:,.0f} 억원")
-    col3.metric("유효 거래 종목 수", f"{active_etf_cnt:,} 개")
-    col4.metric("활동 LP 회원사 수", f"{active_lp_cnt:,} 사")
-    st.divider()
-
-    lp_total = df_t1.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False) / 100_000_000
-    lp_total = lp_total[lp_total > 0]
-
-    if not lp_total.empty:
-        fig = px.bar(
-            lp_total, x=lp_total.index, y=lp_total.values, 
-            title="필터 적용 LP사별 총 거래대금 (억원)",
-            labels={'y': '거래대금(억)', '회원사명': '증권사'},
-            color_discrete_sequence=['#4A90E2']
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("선택하신 필터 조건에 해당하는 데이터가 없습니다.")
-
-    st.divider()
-
-    st.subheader("📉 시계열(Time-Series) 일별 거래대금 추이")
-
-    trend_type = st.radio("추이 분석 관점 선택", ["시장 전체 (Total Market)", "특정 LP사 (Specific LP)", "특정 운용사 (Specific AMC)"], horizontal=True, key='t1_trend')
-
-    if trend_type == "시장 전체 (Total Market)":
-        daily_vol = df_t1.groupby('거래일자')['총LP거래대금'].sum().reset_index()
-        daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
-        fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', title="전체 시장 일별 LP 거래대금 추이", markers=True)
-        st.plotly_chart(fig_t, use_container_width=True)
-
-    elif trend_type == "특정 LP사 (Specific LP)":
-        target_lps = st.multiselect("비교할 LP사 선택 (다중 선택 가능)", sorted(df_t1['회원사명'].unique()), key='t1_lp_sel')
+    # --- 💡 데이터 복사 및 필터 적용 (관점 필터) ---
+    is_data_empty = False
+    if trend_type == "특정 LP사 (Specific LP)":
         if target_lps:
-            daily_vol = df_t1[df_t1['회원사명'].isin(target_lps)].groupby(['거래일자', '회원사명'])['총LP거래대금'].sum().reset_index()
+            df_t1 = df_t1[df_t1['회원사명'].isin(target_lps)]
+        else:
+            is_data_empty = True # LP사를 하나도 안 고른 경우
+
+    elif trend_type == "특정 운용사 (Specific AMC)":
+        if target_amcs:
+            df_t1 = df_t1[df_t1['amc'].isin(target_amcs)]
+        else:
+            is_data_empty = True # 운용사를 하나도 안 고른 경우
+
+    st.write("") # 간격 띄우기
+
+    if is_data_empty or df_t1.empty:
+        st.warning("조회할 데이터가 없습니다. 상단에서 대상을 선택하거나 필터 조건을 변경해 주세요.")
+    else:
+        # KPI 지표 계산
+        total_amt = df_t1['총LP거래대금'].sum() / 100_000_000
+        unique_days = df_t1['거래일자'].nunique()
+        daily_avg = total_amt / unique_days if unique_days > 0 else 0
+        active_etf_cnt = df_t1[df_t1['총LP거래대금'] > 0]['종목코드'].nunique()
+        active_lp_cnt = df_t1[df_t1['총LP거래대금'] > 0]['회원사명'].nunique()
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("기간 총 거래대금", f"{total_amt:,.0f} 억원")
+        col2.metric("일평균 거래대금", f"{daily_avg:,.0f} 억원")
+        col3.metric("유효 거래 종목 수", f"{active_etf_cnt:,} 개")
+        col4.metric("활동 LP 회원사 수", f"{active_lp_cnt:,} 사")
+        
+        st.divider()
+
+        # 막대 차트 (Bar Chart)
+        lp_total = df_t1.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False) / 100_000_000
+        lp_total = lp_total[lp_total > 0]
+
+        if not lp_total.empty:
+            fig = px.bar(
+                lp_total, x=lp_total.index, y=lp_total.values, 
+                title="선택된 조건 내 LP사별 총 거래대금 (억원)",
+                labels={'y': '거래대금(억)', '회원사명': '증권사'},
+                color_discrete_sequence=['#4A90E2']
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.divider()
+
+        # 시계열 차트 (Line Chart)
+        st.subheader("📉 시계열(Time-Series) 일별 거래대금 추이")
+        
+        if trend_type == "시장 전체 (Total Market)":
+            daily_vol = df_t1.groupby('거래일자')['총LP거래대금'].sum().reset_index()
+            daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
+            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', title="전체 시장 일별 LP 거래대금 추이", markers=True)
+            st.plotly_chart(fig_t, use_container_width=True)
+
+        elif trend_type == "특정 LP사 (Specific LP)":
+            daily_vol = df_t1.groupby(['거래일자', '회원사명'])['총LP거래대금'].sum().reset_index()
             daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
             fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='회원사명', title="선택 LP사별 일별 거래대금 추이", markers=True)
             st.plotly_chart(fig_t, use_container_width=True)
 
-    elif trend_type == "특정 운용사 (Specific AMC)":
-        target_amcs = st.multiselect("비교할 운용사 선택 (다중 선택 가능)", sorted([a for a in df_t1['amc'].unique() if a != '미분류']), key='t1_amc_sel')
-        if target_amcs:
-            daily_vol = df_t1[df_t1['amc'].isin(target_amcs)].groupby(['거래일자', 'amc'])['총LP거래대금'].sum().reset_index()
+        elif trend_type == "특정 운용사 (Specific AMC)":
+            daily_vol = df_t1.groupby(['거래일자', 'amc'])['총LP거래대금'].sum().reset_index()
             daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
             fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='amc', title="선택 운용사별 일별 거래대금 추이", markers=True)
             st.plotly_chart(fig_t, use_container_width=True)
