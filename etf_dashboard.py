@@ -795,12 +795,13 @@ with tab6:
         }), use_container_width=True, hide_index=True
     )
     
+    
 # ==========================================
-# Tab 7: 시장 전체 거래대금 (KRX Direct API 연동)
+# Tab 7: 시장 전체 거래대금 (Yahoo Finance API 연동)
 # ==========================================
 with tab7:
-    st.subheader("🇰🇷 KRX 공식 시장 거래대금 분석 (Direct API 연동)")
-    st.write("선택한 ETF 섹터의 **KRX 공식 전체 거래대금**을 조회하고, LP 거래대금과의 비율(**LP 관여율**)을 정확하게 분석합니다.")
+    st.subheader("🌐 야후 파이낸스 시장 거래대금 분석 (yfinance 연동)")
+    st.write("선택한 ETF 섹터의 **야후 파이낸스 추정 전체 거래대금**을 조회하고, LP 거래대금과의 비율(**LP 관여율**)을 분석합니다.")
 
     # 5개 섹터 필터링 UI
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -824,17 +825,15 @@ with tab7:
     
     st.info(f"선택된 필터 조건 대상 ETF 종목 수: **{total_found_cnt} 개**")
     
-    if st.button("📊 KRX 실시간 데이터로 밴 걱정 없이 정확하게 추이 분석하기", type="primary"):
+    if st.button("📊 야후 파이낸스 데이터로 일괄 추이 분석하기", type="primary"):
         if total_found_cnt == 0:
             st.warning("선택된 종목이 없습니다. 필터를 변경해주세요.")
         else:
-            with st.spinner("KRX 거래소 서버에서 데이터를 직접 추출하고 있습니다... (캐싱 적용됨)"):
+            with st.spinner("야후 파이낸스 서버에서 데이터를 다운로드하고 있습니다... (캐싱 적용됨)"):
                 try:
                     tickers_tuple = tuple(target_etfs)
                     
-                    # 💡 pykrx 에러 없는 순수 API 호출 함수
-                    # daily_market_val = get_krx_market_data_direct(tickers_tuple, start_date, end_date)
-                    # 💡 야후 파이낸스 일괄 다운로드 함수로 변경 (속도 향상 및 차단 방지)
+                    # 💡 야후 파이낸스 일괄 다운로드 함수 호출
                     daily_market_val = get_yfinance_market_data(tickers_tuple, start_date, end_date)
                     
                     if daily_market_val.empty:
@@ -847,7 +846,6 @@ with tab7:
                         lp_daily = df_t7.groupby(df_t7['거래일자'].dt.date)['총LP거래대금'].sum().to_frame(name='LP거래대금')
                         lp_daily['LP거래대금(억)'] = lp_daily['LP거래대금'] / 100_000_000
                         
-
                         # 데이터 병합
                         merged_df = daily_market_val.join(lp_daily, how='outer').fillna(0)
                         
@@ -861,7 +859,6 @@ with tab7:
                         merged_df = merged_df.reset_index().rename(columns={'거래일자': '날짜', 'index': '날짜'}) 
                         # ('index'가 있을 경우와 '거래일자'가 있을 경우 모두 대비하여 안전하게 처리)
                         
-                        
                         # 차트 1: 선 차트
                         fig_t7 = px.line(
                             merged_df, x='날짜', y=['시장거래대금(억)', 'LP거래대금(억)'],
@@ -874,7 +871,7 @@ with tab7:
                         # 차트 2: 막대 차트 (LP 관여율)
                         fig_t7_ratio = px.bar(
                             merged_df, x='날짜', y='LP관여율(%)',
-                            title="KRX 공식 시장 거래대금 대비 LP 관여율 (%)",
+                            title="야후 파이낸스 추정 시장 거래대금 대비 LP 관여율 (%)",
                             text=merged_df['LP관여율(%)'].apply(lambda x: f"{x:.1f}%"),
                             color_discrete_sequence=['#ff9f43']
                         )
