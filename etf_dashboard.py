@@ -300,10 +300,8 @@ def get_krx_market_data_hybrid_safe(tickers_tuple, start_date_val, end_date_val)
             return res_df
 
     return pd.DataFrame()
-
-
 # ----------------------------------------------------------------------
-# 💡 [궁극의 해결책] pykrx 삭제 및 KRX 웹 API 직접 호출 (에러 원천 차단)
+# 💡 [세션 기반 안정형] KRX 웹 API 직접 통신 함수 (에러 및 빈 값 완벽 해결)
 # ----------------------------------------------------------------------
 @st.cache_data(ttl=14400, show_spinner=False)
 def get_krx_market_data_direct(tickers_tuple, start_date_val, end_date_val):
@@ -315,16 +313,23 @@ def get_krx_market_data_direct(tickers_tuple, start_date_val, end_date_val):
     target_set = set(tickers_tuple)
     daily_records = []
 
-    # KRX 거래소 내부 API 엔드포인트
+    # 💡 [핵심] 세션(Session)을 생성하여 KRX 쿠키/헤더 인증 유지
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd"
+    })
+
+    # 먼저 메인 페이지를 찔러서 세션 쿠키(JSESSIONID 등)를 발급받음
+    try:
+        session.get("https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd", timeout=5)
+    except Exception:
+        pass
+
     url = "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
-    headers = {
-        "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
 
     for d in date_range:
         date_str = d.strftime('%Y%m%d')
-        # ETF 전종목 시세 호출 파라미터 (MDCSTAT04301)
         payload = {
             "bld": "dbms/MDC/STAT/standard/MDCSTAT04301",
             "locale": "ko_KR",
@@ -335,26 +340,33 @@ def get_krx_market_data_direct(tickers_tuple, start_date_val, end_date_val):
         }
         
         try:
-            res = requests.post(url, data=payload, headers=headers, timeout=5)
+            # 세션을 이용해 요청
+            res = session.post(url, data=payload, timeout=5)
             if res.status_code == 200:
                 json_data = res.json()
-                out_block = json_data.get('OutBlock_1', [])
+                
+                # KRX 응답 구조 키 값 ('output' 또는 'OutBlock_1') 대응
+                out_block = json_data.get('output', [])
+                if not out_block:
+                    out_block = json_data.get('OutBlock_1', [])
                 
                 if out_block:
                     df_day = pd.DataFrame(out_block)
                     
-                    # 'ISU_SRT_CD' = 종목코드, 'ACC_TRDVAL' = 거래대금(문자열, 콤마 포함)
-                    filtered = df_day[df_day['ISU_SRT_CD'].isin(target_set)]
+                    # 'ISU_SRT_CD' 또는 'isu_srt_cd' (종목코드), 'ACC_TRDVAL' (거래대금)
+                    col_code = 'ISU_SRT_CD' if 'ISU_SRT_CD' in df_day.columns else 'isu_srt_cd'
+                    col_val = 'ACC_TRDVAL' if 'ACC_TRDVAL' in df_day.columns else 'acc_trdval'
                     
-                    if not filtered.empty:
-                        # 콤마(,) 제거 후 숫자로 변환하여 합산
-                        day_sum = pd.to_numeric(filtered['ACC_TRDVAL'].str.replace(',', ''), errors='coerce').sum()
-                        if day_sum > 0:
-                            daily_records.append({'거래일자': d.date(), '시장거래대금': day_sum})
+                    if col_code in df_day.columns and col_val in df_day.columns:
+                        filtered = df_day[df_day[col_code].isin(target_set)]
+                        
+                        if not filtered.empty:
+                            day_sum = pd.to_numeric(filtered[col_val].str.replace(',', ''), errors='coerce').sum()
+                            if day_sum > 0:
+                                daily_records.append({'거래일자': d.date(), '시장거래대금': day_sum})
         except Exception:
             pass
         
-        # 밴(Ban) 방지를 위한 강제 0.15초 휴식
         time.sleep(0.15) 
 
     if daily_records:
@@ -362,6 +374,7 @@ def get_krx_market_data_direct(tickers_tuple, start_date_val, end_date_val):
         return res_df
         
     return pd.DataFrame()
+
 
 # ----------------------------------------------------------------------
 # 사이드바 (Global Date Filter)
