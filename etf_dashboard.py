@@ -287,25 +287,32 @@ def get_krx_open_api_market_data(tickers, start_date, end_date):
     """
     KRX Open API(etf_bydd_trd)를 통해 선택한 기간과 종목들의 시장 거래대금 합계를 가져옵니다.
     """
-    # st.secrets에서 API Key 자동 로드
     api_key = st.secrets.get("KRX_API_KEY")
     if not api_key:
         return pd.DataFrame()
 
     url = "https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd"
+    
+    # 💡 AUTH_KEY 헤더 및 AUTH-KEY 모두 대용
     headers = {
-        "AUTH_KEY": api_key
+        "AUTH_KEY": api_key,
+        "AUTH-KEY": api_key
     }
     
     # 평일(영업일) 기준으로 조회 날짜 생성
     date_list = pd.date_range(start=start_date, end=end_date, freq='B')
     
     all_data = []
-    tickers_set = set(tickers)  # 검색 속도 향상을 위한 set 변환
+    
+    # 6자리 단축코드 리스트 생성 (예: '069500')
+    clean_tickers = [str(t).strip().zfill(6) for t in tickers]
     
     for dt in date_list:
         basDd = dt.strftime('%Y%m%d')
-        params = {"basDd": basDd}
+        params = {
+            "basDd": basDd,
+            "AUTH_KEY": api_key  # Query Parameter로도 함께 전달
+        }
         
         try:
             response = requests.get(url, headers=headers, params=params, timeout=10)
@@ -315,21 +322,27 @@ def get_krx_open_api_market_data(tickers, start_date, end_date):
                 if "OutBlock_1" in data:
                     df_day = pd.DataFrame(data["OutBlock_1"])
                     
-                    if not df_day.empty:
-                        # 타겟 종목 필터링
-                        df_day = df_day[df_day['ISU_CD'].isin(tickers_set)]
+                    if not df_day.empty and 'ISU_CD' in df_day.columns:
+                        # 💡 핵심 수정: ISU_CD(표준코드 또는 단축코드)에서 6자리 종목코드가 포함되어 있는지 확인
+                        # 예: 'KR7069500007' 안에 '069500'이 들어있는지 체크
+                        df_day['short_code'] = df_day['ISU_CD'].astype(str).str.extract(r'(\d{6})')[0]
                         
-                        if not df_day.empty:
-                            if df_day['ACC_TRDVAL'].dtype == object:
-                                df_day['ACC_TRDVAL'] = pd.to_numeric(df_day['ACC_TRDVAL'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                        # 타겟 종목 필터링
+                        filtered_df = df_day[df_day['short_code'].isin(clean_tickers)]
+                        
+                        if not filtered_df.empty:
+                            if filtered_df['ACC_TRDVAL'].dtype == object:
+                                filtered_df['ACC_TRDVAL'] = pd.to_numeric(
+                                    filtered_df['ACC_TRDVAL'].astype(str).str.replace(',', ''), 
+                                    errors='coerce'
+                                ).fillna(0)
                                 
-                            daily_total = df_day['ACC_TRDVAL'].sum()
+                            daily_total = filtered_df['ACC_TRDVAL'].sum()
                             all_data.append({'거래일자': pd.to_datetime(dt.date()), '시장거래대금': daily_total})
                             
-        except Exception:
+        except Exception as e:
             pass
             
-        # 💡 API 차단 방지를 위한 미세한 대기 시간 추가 (0.15초)
         time.sleep(0.15)
             
     if all_data:
