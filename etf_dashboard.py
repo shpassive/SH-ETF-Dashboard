@@ -8,7 +8,7 @@ from email.header import decode_header
 import zipfile
 import io
 import datetime
-import time  # 밴 방지용 딜레이를 위한 모듈
+import time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -16,7 +16,7 @@ from googleapiclient.http import MediaIoBaseUpload
 # ----------------------------------------------------------------------
 # 페이지 기본 설정
 # ----------------------------------------------------------------------
-st.set_page_config(page_title="ETF Market Monitoring (v7.1)", layout="wide")
+st.set_page_config(page_title="ETF Market Monitoring (v7.2)", layout="wide")
 st.title("📊 ETF Market Monitoring Dashboard (통합판)")
 
 # ----------------------------------------------------------------------
@@ -236,6 +236,73 @@ if df.empty:
 
 
 # ----------------------------------------------------------------------
+# 💡 [최종 스마트 최적화] 종목 수 vs 영업일 수 비교 하이브리드 캐시 함수
+# ----------------------------------------------------------------------
+@st.cache_data(ttl=14400, show_spinner=False)  # 4시간 메모리 캐싱
+def get_krx_market_data_hybrid_safe(tickers_tuple, start_date_val, end_date_val):
+    from pykrx import stock
+    import pandas as pd
+    import time
+
+    start_str = start_date_val.strftime('%Y%m%d')
+    end_str = end_date_val.strftime('%Y%m%d')
+    
+    date_range = pd.date_range(start=start_date_val, end=end_date_val, freq='B')
+    num_days = len(date_range)
+    num_tickers = len(tickers_tuple)
+
+    # ------------------------------------------------------------------
+    # [전략 1] 종목 수 <= 영업일 수 (예: 필터링되어 종목이 몇 개 없을 때)
+    # 👉 종목별로 1년치를 한 번에 요청 (요청 횟수 = 종목 수)
+    # ------------------------------------------------------------------
+    if num_tickers <= num_days:
+        all_dfs = []
+        for ticker in tickers_tuple:
+            try:
+                # 💡 종목 1개의 기간 전체 데이터를 1회 요청으로 수신
+                df = stock.get_market_ohlcv_by_date(start_str, end_str, ticker)
+                if not df.empty and '거래대금' in df.columns:
+                    all_dfs.append(df[['거래대금']].rename(columns={'거래대금': ticker}))
+            except Exception:
+                pass
+            time.sleep(0.1) # 종목 수가 적으므로 0.1초만 휴식
+
+        if all_dfs:
+            merged = pd.concat(all_dfs, axis=1).fillna(0)
+            res_df = merged.sum(axis=1).to_frame(name='시장거래대금')
+            res_df.index = pd.to_datetime(res_df.index).date
+            res_df.index.name = '거래일자'
+            return res_df
+
+    # ------------------------------------------------------------------
+    # [전략 2] 종목 수 > 영업일 수 (예: 전 종목 900개를 조회할 때)
+    # 👉 날짜별로 전 종목 시세를 한 번에 요청 (요청 횟수 = 영업일 수)
+    # ------------------------------------------------------------------
+    else:
+        daily_records = []
+        target_set = set(tickers_tuple)
+        for d in date_range:
+            date_str = d.strftime('%Y%m%d')
+            try:
+                # 💡 해당 날짜의 전체 종목 시세를 1회 요청으로 수신
+                df_day = stock.get_etf_ohlcv_by_ticker(date_str)
+                if not df_day.empty and '거래대금' in df_day.columns:
+                    filtered_df = df_day[df_day.index.isin(target_set)]
+                    day_sum = filtered_df['거래대금'].sum()
+                    if day_sum > 0:
+                        daily_records.append({'거래일자': d.date(), '시장거래대금': day_sum})
+            except Exception:
+                pass
+            time.sleep(0.15) # 0.15초 휴식
+
+        if daily_records:
+            res_df = pd.DataFrame(daily_records).set_index('거래일자')
+            return res_df
+
+    return pd.DataFrame()
+
+
+# ----------------------------------------------------------------------
 # 사이드바 (Global Date Filter)
 # ----------------------------------------------------------------------
 st.sidebar.header("🗓️ 데이터 기간 설정")
@@ -259,42 +326,6 @@ else:
     start_date = end_date = date_selection[0]
 
 df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'].dt.date <= end_date)].copy()
-
-
-# ----------------------------------------------------------------------
-# 💡 [안전 강화] pykrx 수신 전용 캐시 함수 (밴 방지 설계)
-# ----------------------------------------------------------------------
-@st.cache_data(ttl=14400, show_spinner=False)  # 4시간(14400초) 캐싱
-def get_pykrx_market_data_safe(tickers_tuple, start_str, end_str):
-    from pykrx import stock
-    import pandas as pd
-    
-    all_data = []
-    
-    # 여러 종목을 한 번에 요청하면 밴(Ban) 당할 수 있으므로, 하나씩 0.5초 간격으로 요청
-    for ticker in tickers_tuple:
-        try:
-            # KRX 시장 데이터 호출 (시가,고가,저가,종가,거래량,거래대금 반환)
-            df = stock.get_market_ohlcv(start_str, end_str, ticker)
-            
-            if not df.empty and '거래대금' in df.columns:
-                df = df[['거래대금']].copy()
-                df.columns = [ticker] # 해당 티커 이름으로 컬럼명 변경
-                all_data.append(df)
-        except Exception:
-            pass
-        
-        # 🚨 [핵심] KRX IP 밴 방지를 위한 강제 딜레이
-        time.sleep(0.5)
-
-    if all_data:
-        # 리스트에 모인 각 티커별 거래대금 데이터프레임을 날짜(Index) 기준으로 합치기
-        merged_df = pd.concat(all_data, axis=1).fillna(0)
-        # 날짜별로 모든 티커의 거래대금을 총합
-        total_market_val = merged_df.sum(axis=1).to_frame(name='시장거래대금')
-        return total_market_val
-    else:
-        return pd.DataFrame()
 
 
 # ----------------------------------------------------------------------
@@ -415,7 +446,7 @@ with tab1:
             st.plotly_chart(fig_t, use_container_width=True)
 
 # ==========================================
-# Tab 2~6 (동일 유지)
+# Tab 2: ETF 구분별 분석
 # ==========================================
 with tab2:
     st.subheader("📈 ETF 섹터 필터링을 통한 점유율 및 성향 분석")
@@ -491,6 +522,9 @@ with tab2:
         }), use_container_width=True, hide_index=True
     )
 
+# ==========================================
+# Tab 3: LP사 다각도 분석
+# ==========================================
 with tab3:
     lp_list = df_filtered.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
     target_lp = st.selectbox("📌 분석 대상 LP사 선택", lp_list)
@@ -639,6 +673,9 @@ with tab3:
         else:
             st.warning("선택하신 필터 조건에 해당하는 종목 거래 내역이 없습니다.")
 
+# ==========================================
+# Tab 4: ETF별 주력 LP 분석
+# ==========================================
 with tab4:
     st.subheader("🔍 특정 ETF 종목의 LP 점유율 파악")
     etf_list = df_filtered.groupby(['a_code', '종목명'])['총LP거래대금'].sum().sort_values(ascending=False).reset_index()
@@ -690,6 +727,9 @@ with tab4:
             }), use_container_width=True, hide_index=True
         )
 
+# ==========================================
+# Tab 5: 운용사별 주력 ETF 분석
+# ==========================================
 with tab5:
     st.subheader("🏢 운용사(AMC)별 ETF 및 1~3위 핵심 파트너 LP")
     amc_list = df_filtered.groupby('amc')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
@@ -722,6 +762,9 @@ with tab5:
             }), use_container_width=True, hide_index=True
         )
 
+# ==========================================
+# Tab 6: 종목 집중도 분석
+# ==========================================
 with tab6:
     st.subheader("🎯 종목 집중도 (HHI 및 Top-N 의존도)")
 
@@ -775,7 +818,7 @@ with tab6:
     )
 
 # ==========================================
-# Tab 7: 시장 전체 거래대금 (KRX - pykrx)
+# Tab 7: 시장 전체 거래대금 (KRX - pykrx 하이브리드)
 # ==========================================
 with tab7:
     st.subheader("🇰🇷 KRX 공식 시장 거래대금 분석 (pykrx 연동)")
@@ -797,39 +840,27 @@ with tab7:
     if drv_filter_t7 != "전체": df_t7 = df_t7[df_t7['deriv'] == drv_filter_t7]
     if trk_filter_t7 != "전체": df_t7 = df_t7[df_t7['tracking'] == trk_filter_t7]
     
-    # pykrx 과부하(차단) 방지를 위한 최대 50개 제한 로직
-    top_etfs_series = df_t7.groupby('a_code')['총LP거래대금'].sum().sort_values(ascending=False)
-    target_etfs = top_etfs_series.head(50).index.tolist()
-    total_found_cnt = df_t7['a_code'].nunique()
+    # pykrx 코드 형식 변환 ('A069500' -> '069500')
+    target_etfs = [code.replace('A', '') for code in df_t7['a_code'].unique()]
+    total_found_cnt = len(target_etfs)
     
-    if total_found_cnt > 50:
-        st.info(f"💡 필터 조건 해당 종목: 총 **{total_found_cnt}개** (API 밴 방지 및 속도를 위해 LP 거래대금 **상위 50개 종목**의 시장 데이터만 합산합니다.)")
-    else:
-        st.info(f"선택된 필터에 해당하는 ETF 종목 수: **{total_found_cnt} 개**")
+    st.info(f"선택된 필터 조건 대상 ETF 종목 수: **{total_found_cnt} 개**")
     
     if st.button("📊 KRX 데이터로 정확한 추이 분석하기", type="primary"):
-        if len(target_etfs) == 0:
+        if total_found_cnt == 0:
             st.warning("선택된 종목이 없습니다. 필터를 변경해주세요.")
         else:
-            # 딜레이(time.sleep)로 인해 소요시간이 걸릴 수 있음을 안내
-            estimated_time = len(target_etfs) * 0.5
-            with st.spinner(f"KRX에서 정확한 거래대금 데이터를 안전하게 불러오는 중입니다... (예상 소요시간: 약 {estimated_time:.0f}초)"):
+            with st.spinner("최적 경로를 계산하여 KRX 데이터를 안전하게 수집 중입니다..."):
                 try:
-                    # pykrx는 '069500' 처럼 A가 없는 6자리 코드를 사용
-                    tickers = tuple([code.replace('A', '') for code in target_etfs])
+                    tickers_tuple = tuple(target_etfs)
                     
-                    # 날짜 포맷은 YYYYMMDD
-                    start_str = start_date.strftime('%Y%m%d')
-                    end_str = end_date.strftime('%Y%m%d')
-                    
-                    # 💡 캐싱된 함수를 호출하여 동일 요청 시 바로 결과를 리턴하도록 처리
-                    daily_market_val = get_pykrx_market_data_safe(tickers, start_str, end_str)
+                    # 💡 스마트 하이브리드 수집 함수 호출
+                    daily_market_val = get_krx_market_data_hybrid_safe(tickers_tuple, start_date, end_date)
                     
                     if daily_market_val.empty:
-                        st.error("데이터를 불러오지 못했습니다. 해당 기간에 거래일이 없거나 통신이 원활하지 않습니다.")
+                        st.error("데이터를 불러오지 못했습니다. 해당 기간에 거래일이 없거나 KRX 응답이 지연되고 있습니다.")
                     else:
-                        daily_market_val.index = pd.to_datetime(daily_market_val.index).date
-                        # pykrx의 '거래대금'은 원(KRW) 단위이므로 1억 원으로 나눔
+                        # 원(KRW) -> 억원 변환
                         daily_market_val['시장거래대금(억)'] = daily_market_val['시장거래대금'] / 100_000_000
                         
                         # 기존 LP 데이터 합산
