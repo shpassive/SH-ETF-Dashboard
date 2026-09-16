@@ -238,49 +238,6 @@ if df.empty:
     st.stop()
 
 
-# ----------------------------------------------------------------------
-# 💡 [야후 파이낸스 연동] 한 번에 다중 종목을 다운로드하는 하이브리드 캐시 함수
-# ----------------------------------------------------------------------
-@st.cache_data(ttl=14400, show_spinner=False)
-def get_yfinance_market_data(tickers_tuple, start_date_val, end_date_val):
-    import yfinance as yf
-    import pandas as pd
-    import datetime
-
-    # 한국 종목코드 형식으로 변환 (.KS 추가)
-    yf_tickers = [f"{t}.KS" for t in tickers_tuple]
-    
-    # yfinance는 end_date 당일을 포함하지 않으므로 하루를 더해줍니다.
-    start_str = start_date_val.strftime('%Y-%m-%d')
-    end_date_yf = end_date_val + datetime.timedelta(days=1)
-    end_str = end_date_yf.strftime('%Y-%m-%d')
-    
-    try:
-        # 여러 종목을 한 번에 다운로드 (멀티스레딩 적용으로 속도 극대화)
-        df = yf.download(yf_tickers, start=start_str, end=end_str, threads=True)
-        
-        if df.empty:
-            return pd.DataFrame()
-
-        # 종목 수에 따라 yfinance가 반환하는 DataFrame 구조가 다름을 대응
-        if len(yf_tickers) == 1:
-            # 단일 종목일 경우
-            trading_value = df['Volume'] * df['Close']
-            daily_sum = trading_value.to_frame(name='시장거래대금')
-        else:
-            # 다중 종목일 경우 (MultiIndex DataFrame)
-            trading_value = df['Volume'] * df['Close']
-            # 모든 종목의 거래대금을 일자별로 합산
-            daily_sum = trading_value.sum(axis=1).to_frame(name='시장거래대금')
-        
-        # 병합을 위해 인덱스를 datetime.date 객체로 변환
-        daily_sum.index = pd.to_datetime(daily_sum.index).date
-        daily_sum.index.name = '거래일자'
-        
-        return daily_sum
-        
-    except Exception as e:
-        return pd.DataFrame()
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_krx_open_api_market_data(tickers, start_date, end_date):
@@ -352,10 +309,11 @@ def get_krx_open_api_market_data(tickers, start_date, end_date):
     else:
         return pd.DataFrame()
 
+
 # ----------------------------------------------------------------------
 # 사이드바 (Global Date Filter)
 # ----------------------------------------------------------------------
-st.sidebar.header("🗓️ 데이터 기간 설정")
+st.sidebar.header("🗓️ 데이터 날짜 설정")
 
 min_val = df['거래일자'].min()
 max_val = df['거래일자'].max()
@@ -363,18 +321,38 @@ max_val = df['거래일자'].max()
 min_date = min_val.date() if hasattr(min_val, 'date') else pd.to_datetime(min_val).date()
 max_date = max_val.date() if hasattr(max_val, 'date') else pd.to_datetime(max_val).date()
 
-date_selection = st.sidebar.date_input(
-    "조회 기간을 선택하세요", 
-    [min_date, max_date],
-    min_value=min_date,
-    max_value=max_date
+# 💡 1. 조회 방식 선택 라디오 버튼 추가
+search_type = st.sidebar.radio(
+    "조회 방식을 선택하세요",
+    ["기간 조회", "특정 일자 조회"],
+    horizontal=True
 )
 
-if len(date_selection) == 2:
-    start_date, end_date = date_selection
-else:
-    start_date = end_date = date_selection[0]
+# 💡 2. 선택된 방식에 따라 달력 UI 다르게 렌더링
+if search_type == "기간 조회":
+    date_selection = st.sidebar.date_input(
+        "조회 기간을 선택하세요", 
+        [min_date, max_date], # 기본값: 전체 기간
+        min_value=min_date,
+        max_value=max_date
+    )
+    if len(date_selection) == 2:
+        start_date, end_date = date_selection
+    else:
+        start_date = end_date = date_selection[0]
+        
+else: # 특정 일자 조회
+    single_date = st.sidebar.date_input(
+        "조회할 일자를 선택하세요",
+        max_date, # 기본값: 가장 최근 날짜
+        min_value=min_date,
+        max_value=max_date
+    )
+    # 특정 일자이므로 시작일과 종료일을 동일하게 설정
+    start_date = single_date
+    end_date = single_date
 
+# 💡 3. 하위 로직(데이터 필터링 및 Tab 7 API 호출용)에 그대로 적용
 df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'].dt.date <= end_date)].copy()
 
 
