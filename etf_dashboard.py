@@ -236,146 +236,6 @@ if df.empty:
 
 
 # ----------------------------------------------------------------------
-# 💡 [최종 스마트 최적화] 종목 수 vs 영업일 수 비교 하이브리드 캐시 함수
-# ----------------------------------------------------------------------
-@st.cache_data(ttl=14400, show_spinner=False)  # 4시간 메모리 캐싱
-def get_krx_market_data_hybrid_safe(tickers_tuple, start_date_val, end_date_val):
-    from pykrx import stock
-    import pandas as pd
-    import time
-
-    start_str = start_date_val.strftime('%Y%m%d')
-    end_str = end_date_val.strftime('%Y%m%d')
-    
-    date_range = pd.date_range(start=start_date_val, end=end_date_val, freq='B')
-    num_days = len(date_range)
-    num_tickers = len(tickers_tuple)
-
-    # ------------------------------------------------------------------
-    # [전략 1] 종목 수 <= 영업일 수 (예: 필터링되어 종목이 몇 개 없을 때)
-    # 👉 종목별로 1년치를 한 번에 요청 (요청 횟수 = 종목 수)
-    # ------------------------------------------------------------------
-    if num_tickers <= num_days:
-        all_dfs = []
-        for ticker in tickers_tuple:
-            try:
-                # 💡 종목 1개의 기간 전체 데이터를 1회 요청으로 수신
-                df = stock.get_market_ohlcv_by_date(start_str, end_str, ticker)
-                if not df.empty and '거래대금' in df.columns:
-                    all_dfs.append(df[['거래대금']].rename(columns={'거래대금': ticker}))
-            except Exception:
-                pass
-            time.sleep(0.1) # 종목 수가 적으므로 0.1초만 휴식
-
-        if all_dfs:
-            merged = pd.concat(all_dfs, axis=1).fillna(0)
-            res_df = merged.sum(axis=1).to_frame(name='시장거래대금')
-            res_df.index = pd.to_datetime(res_df.index).date
-            res_df.index.name = '거래일자'
-            return res_df
-
-    # ------------------------------------------------------------------
-    # [전략 2] 종목 수 > 영업일 수 (예: 전 종목 900개를 조회할 때)
-    # 👉 날짜별로 전 종목 시세를 한 번에 요청 (요청 횟수 = 영업일 수)
-    # ------------------------------------------------------------------
-    else:
-        daily_records = []
-        target_set = set(tickers_tuple)
-        for d in date_range:
-            date_str = d.strftime('%Y%m%d')
-            try:
-                # 💡 해당 날짜의 전체 종목 시세를 1회 요청으로 수신
-                df_day = stock.get_etf_ohlcv_by_ticker(date_str)
-                if not df_day.empty and '거래대금' in df_day.columns:
-                    filtered_df = df_day[df_day.index.isin(target_set)]
-                    day_sum = filtered_df['거래대금'].sum()
-                    if day_sum > 0:
-                        daily_records.append({'거래일자': d.date(), '시장거래대금': day_sum})
-            except Exception:
-                pass
-            time.sleep(0.15) # 0.15초 휴식
-
-        if daily_records:
-            res_df = pd.DataFrame(daily_records).set_index('거래일자')
-            return res_df
-
-    return pd.DataFrame()
-# ----------------------------------------------------------------------
-# 💡 [세션 기반 안정형] KRX 웹 API 직접 통신 함수 (에러 및 빈 값 완벽 해결)
-# ----------------------------------------------------------------------
-@st.cache_data(ttl=14400, show_spinner=False)
-def get_krx_market_data_direct(tickers_tuple, start_date_val, end_date_val):
-    import pandas as pd
-    import requests
-    import time
-
-    date_range = pd.date_range(start=start_date_val, end=end_date_val, freq='B')
-    target_set = set(tickers_tuple)
-    daily_records = []
-
-    # 💡 [핵심] 세션(Session)을 생성하여 KRX 쿠키/헤더 인증 유지
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd"
-    })
-
-    # 먼저 메인 페이지를 찔러서 세션 쿠키(JSESSIONID 등)를 발급받음
-    try:
-        session.get("https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd", timeout=5)
-    except Exception:
-        pass
-
-    url = "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
-
-    for d in date_range:
-        date_str = d.strftime('%Y%m%d')
-        payload = {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT04301",
-            "locale": "ko_KR",
-            "trdDd": date_str,
-            "share": "1",
-            "money": "1",
-            "csvxls_isNo": "false"
-        }
-        
-        try:
-            # 세션을 이용해 요청
-            res = session.post(url, data=payload, timeout=5)
-            if res.status_code == 200:
-                json_data = res.json()
-                
-                # KRX 응답 구조 키 값 ('output' 또는 'OutBlock_1') 대응
-                out_block = json_data.get('output', [])
-                if not out_block:
-                    out_block = json_data.get('OutBlock_1', [])
-                
-                if out_block:
-                    df_day = pd.DataFrame(out_block)
-                    
-                    # 'ISU_SRT_CD' 또는 'isu_srt_cd' (종목코드), 'ACC_TRDVAL' (거래대금)
-                    col_code = 'ISU_SRT_CD' if 'ISU_SRT_CD' in df_day.columns else 'isu_srt_cd'
-                    col_val = 'ACC_TRDVAL' if 'ACC_TRDVAL' in df_day.columns else 'acc_trdval'
-                    
-                    if col_code in df_day.columns and col_val in df_day.columns:
-                        filtered = df_day[df_day[col_code].isin(target_set)]
-                        
-                        if not filtered.empty:
-                            day_sum = pd.to_numeric(filtered[col_val].str.replace(',', ''), errors='coerce').sum()
-                            if day_sum > 0:
-                                daily_records.append({'거래일자': d.date(), '시장거래대금': day_sum})
-        except Exception:
-            pass
-        
-        time.sleep(0.15) 
-
-    if daily_records:
-        res_df = pd.DataFrame(daily_records).set_index('거래일자')
-        return res_df
-        
-    return pd.DataFrame()
-
-# ----------------------------------------------------------------------
 # 💡 [야후 파이낸스 연동] 한 번에 다중 종목을 다운로드하는 하이브리드 캐시 함수
 # ----------------------------------------------------------------------
 @st.cache_data(ttl=14400, show_spinner=False)
@@ -987,6 +847,7 @@ with tab7:
                         lp_daily = df_t7.groupby(df_t7['거래일자'].dt.date)['총LP거래대금'].sum().to_frame(name='LP거래대금')
                         lp_daily['LP거래대금(억)'] = lp_daily['LP거래대금'] / 100_000_000
                         
+
                         # 데이터 병합
                         merged_df = daily_market_val.join(lp_daily, how='outer').fillna(0)
                         
@@ -996,7 +857,10 @@ with tab7:
                             (merged_df['LP거래대금'] / merged_df['시장거래대금']) * 100, 
                             0
                         )
-                        merged_df = merged_df.reset_index().rename(columns={'index': '날짜'})
+                        # 💡 수정된 부분: 'index' 대신 '거래일자'를 '날짜'로 변경
+                        merged_df = merged_df.reset_index().rename(columns={'거래일자': '날짜', 'index': '날짜'}) 
+                        # ('index'가 있을 경우와 '거래일자'가 있을 경우 모두 대비하여 안전하게 처리)
+                        
                         
                         # 차트 1: 선 차트
                         fig_t7 = px.line(
