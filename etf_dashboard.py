@@ -103,7 +103,7 @@ def update_drive_csv(df, file_id):
         st.error(f"구글 드라이브 업데이트 실패: {e}")
 
 # ----------------------------------------------------------------------
-# 3. 메인 데이터 로드 및 전처리 (401 우회 및 자동 교체 처리)
+# 3. 메인 데이터 로드 및 전처리
 # ----------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data():
@@ -264,10 +264,10 @@ df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'
 # ----------------------------------------------------------------------
 # UI Tabs 구성
 # ----------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "1. 종합 대시보드", "2. ETF 구분별 분석", "3. LP사 다각도 분석", 
     "4. ETF별 주력 LP 분석", "5. 운용사별 주력 ETF 분석",
-    "6. 종목 집중도 분석"
+    "6. 종목 집중도 분석", "7. 시장 전체 거래대금 (Yahoo)"
 ])
 
 # ==========================================
@@ -276,7 +276,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.subheader("📊 시장 핵심 지표 및 추이 (KPI)")
 
-    # --- 💡 수정된 부분: 분석 관점 필터를 최상단으로 이동 ---
     trend_type = st.radio(
         "🔍 데이터 필터링 관점 선택 (아래 모든 지표에 적용됩니다)", 
         ["시장 전체 (Total Market)", "특정 LP사 (Specific LP)", "특정 운용사 (Specific AMC)"], 
@@ -288,19 +287,16 @@ with tab1:
     target_amcs = []
 
     if trend_type == "특정 LP사 (Specific LP)":
-        # 빈 화면 방지를 위해 거래대금 기준 1위 LP사를 기본값으로 세팅
         top_lp = df_filtered.groupby('회원사명')['총LP거래대금'].sum().idxmax() if not df_filtered.empty else None
         target_lps = st.multiselect("비교 분석할 LP사 선택 (다중 선택 가능)", sorted(df_filtered['회원사명'].unique()), default=[top_lp] if top_lp else None, key='t1_lp_sel')
     
     elif trend_type == "특정 운용사 (Specific AMC)":
-        # 빈 화면 방지를 위해 거래대금 기준 1위 운용사를 기본값으로 세팅
         amc_list = sorted([a for a in df_filtered['amc'].unique() if a != '미분류'])
         top_amc = df_filtered[df_filtered['amc'] != '미분류'].groupby('amc')['총LP거래대금'].sum().idxmax() if not df_filtered.empty else None
         target_amcs = st.multiselect("비교 분석할 운용사 선택 (다중 선택 가능)", amc_list, default=[top_amc] if top_amc else None, key='t1_amc_sel')
 
     st.divider()
     
-    # 기존 ETF 세부 속성 필터 (5분할)
     st.write("▼ ETF 섹터 세부 필터")
     c1, c2, c3, c4, c5 = st.columns(5)
     mkt_filter_t1 = c1.selectbox("국내/해외", ["전체"] + list(df_filtered['market'].unique()), key='t1_mkt')
@@ -309,7 +305,6 @@ with tab1:
     drv_filter_t1 = c4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t1_drv')
     trk_filter_t1 = c5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t1_trk')
 
-    # 데이터 복사 및 필터 적용 (섹터 필터)
     df_t1 = df_filtered.copy()
     if mkt_filter_t1 != "전체": df_t1 = df_t1[df_t1['market'] == mkt_filter_t1]
     if ast_filter_t1 != "전체": df_t1 = df_t1[df_t1['asset'] == ast_filter_t1]
@@ -317,26 +312,24 @@ with tab1:
     if drv_filter_t1 != "전체": df_t1 = df_t1[df_t1['deriv'] == drv_filter_t1]
     if trk_filter_t1 != "전체": df_t1 = df_t1[df_t1['tracking'] == trk_filter_t1]
 
-    # --- 💡 데이터 복사 및 필터 적용 (관점 필터) ---
     is_data_empty = False
     if trend_type == "특정 LP사 (Specific LP)":
         if target_lps:
             df_t1 = df_t1[df_t1['회원사명'].isin(target_lps)]
         else:
-            is_data_empty = True # LP사를 하나도 안 고른 경우
+            is_data_empty = True 
 
     elif trend_type == "특정 운용사 (Specific AMC)":
         if target_amcs:
             df_t1 = df_t1[df_t1['amc'].isin(target_amcs)]
         else:
-            is_data_empty = True # 운용사를 하나도 안 고른 경우
+            is_data_empty = True 
 
-    st.write("") # 간격 띄우기
+    st.write("") 
 
     if is_data_empty or df_t1.empty:
         st.warning("조회할 데이터가 없습니다. 상단에서 대상을 선택하거나 필터 조건을 변경해 주세요.")
     else:
-        # KPI 지표 계산
         total_amt = df_t1['총LP거래대금'].sum() / 100_000_000
         unique_days = df_t1['거래일자'].nunique()
         daily_avg = total_amt / unique_days if unique_days > 0 else 0
@@ -351,7 +344,6 @@ with tab1:
         
         st.divider()
 
-        # 막대 차트 (Bar Chart)
         lp_total = df_t1.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False) / 100_000_000
         lp_total = lp_total[lp_total > 0]
 
@@ -366,7 +358,6 @@ with tab1:
 
         st.divider()
 
-        # 시계열 차트 (Line Chart)
         st.subheader("📉 시계열(Time-Series) 일별 거래대금 추이")
         
         if trend_type == "시장 전체 (Total Market)":
@@ -388,7 +379,7 @@ with tab1:
             st.plotly_chart(fig_t, use_container_width=True)
 
 # ==========================================
-# Tab 2: ETF 구분별 분석
+# Tab 2~6 (이전과 동일하게 유지)
 # ==========================================
 with tab2:
     st.subheader("📈 ETF 섹터 필터링을 통한 점유율 및 성향 분석")
@@ -464,9 +455,6 @@ with tab2:
         }), use_container_width=True, hide_index=True
     )
 
-# ==========================================
-# Tab 3: LP사 다각도 분석
-# ==========================================
 with tab3:
     lp_list = df_filtered.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
     target_lp = st.selectbox("📌 분석 대상 LP사 선택", lp_list)
@@ -615,9 +603,6 @@ with tab3:
         else:
             st.warning("선택하신 필터 조건에 해당하는 종목 거래 내역이 없습니다.")
 
-# ==========================================
-# Tab 4: ETF별 주력 LP 분석
-# ==========================================
 with tab4:
     st.subheader("🔍 특정 ETF 종목의 LP 점유율 파악")
     etf_list = df_filtered.groupby(['a_code', '종목명'])['총LP거래대금'].sum().sort_values(ascending=False).reset_index()
@@ -669,9 +654,6 @@ with tab4:
             }), use_container_width=True, hide_index=True
         )
 
-# ==========================================
-# Tab 5: 운용사별 주력 ETF 분석
-# ==========================================
 with tab5:
     st.subheader("🏢 운용사(AMC)별 ETF 및 1~3위 핵심 파트너 LP")
     amc_list = df_filtered.groupby('amc')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
@@ -704,9 +686,6 @@ with tab5:
             }), use_container_width=True, hide_index=True
         )
 
-# ==========================================
-# Tab 6: 종목 집중도 분석
-# ==========================================
 with tab6:
     st.subheader("🎯 종목 집중도 (HHI 및 Top-N 의존도)")
 
@@ -758,3 +737,109 @@ with tab6:
             'HHI 지수': '{:,.0f}'
         }), use_container_width=True, hide_index=True
     )
+
+# ==========================================
+# Tab 7: 시장 전체 거래대금 (Yahoo)
+# ==========================================
+with tab7:
+    st.subheader("🌐 시장 전체 거래대금 추이 (야후 파이낸스 연동)")
+    st.write("선택한 ETF 섹터의 **시장 전체 거래대금(거래량 × 수정주가)** 추이를 분석하고, LP 거래대금과의 비율(**LP 관여율**)을 확인합니다.")
+
+    # 5개 섹터 필터링 UI
+    c1, c2, c3, c4, c5 = st.columns(5)
+    mkt_filter_t7 = c1.selectbox("국내/해외", ["전체"] + list(df_filtered['market'].unique()), key='t7_mkt')
+    ast_filter_t7 = c2.selectbox("주식/그외", ["전체"] + list(df_filtered['asset'].unique()), key='t7_ast')
+    rep_filter_t7 = c3.selectbox("대표지수", ["전체"] + list(df_filtered['is_rep'].unique()), key='t7_rep')
+    drv_filter_t7 = c4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t7_drv')
+    trk_filter_t7 = c5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t7_trk')
+
+    # 필터 적용
+    df_t7 = df_filtered.copy()
+    if mkt_filter_t7 != "전체": df_t7 = df_t7[df_t7['market'] == mkt_filter_t7]
+    if ast_filter_t7 != "전체": df_t7 = df_t7[df_t7['asset'] == ast_filter_t7]
+    if rep_filter_t7 != "전체": df_t7 = df_t7[df_t7['is_rep'] == rep_filter_t7]
+    if drv_filter_t7 != "전체": df_t7 = df_t7[df_t7['deriv'] == drv_filter_t7]
+    if trk_filter_t7 != "전체": df_t7 = df_t7[df_t7['tracking'] == trk_filter_t7]
+    
+    target_etfs = df_t7['a_code'].unique()
+    st.info(f"선택된 필터에 해당하는 ETF 종목 수: **{len(target_etfs)} 개**")
+    
+    # 버튼 클릭 시에만 야후 파이낸스 호출 (API 과부하 방지)
+    if st.button("📊 야후 파이낸스 데이터로 추이 분석하기", type="primary"):
+        if len(target_etfs) == 0:
+            st.warning("선택된 종목이 없습니다. 필터를 변경해주세요.")
+        else:
+            with st.spinner("야후 파이낸스에서 시장 데이터를 가져오는 중입니다... (선택 종목이 많을 경우 10~30초가량 소요될 수 있습니다)"):
+                try:
+                    import yfinance as yf
+                    
+                    # 'A069500' -> '069500.KS' 포맷 변환
+                    tickers = [code.replace('A', '') + '.KS' for code in target_etfs]
+                    
+                    # 야후 파이낸스는 end date 데이터를 포함하지 않으므로 하루를 더해줌
+                    yf_start = start_date.strftime('%Y-%m-%d')
+                    yf_end = (end_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+                    
+                    # yfinance 다운로드 (progress=False로 터미널 지저분해짐 방지)
+                    yf_data = yf.download(tickers, start=yf_start, end=yf_end, progress=False)
+                    
+                    if yf_data.empty:
+                        st.error("데이터를 불러오지 못했습니다. 해당 기간에 거래일이 없거나 종목 코드가 유효하지 않을 수 있습니다.")
+                    else:
+                        # 종목이 1개일 때와 여러 개일 때 DataFrame 구조(MultiIndex)가 달라지는 것 처리
+                        if len(tickers) == 1:
+                            daily_market_val = yf_data['Adj Close'] * yf_data['Volume']
+                            daily_market_val = daily_market_val.to_frame(name='시장거래대금')
+                        else:
+                            # 각 종목별 (수정주가 * 거래량)을 계산 후 일자별로 총합(sum) 계산
+                            daily_market_val = (yf_data['Adj Close'] * yf_data['Volume']).sum(axis=1).to_frame(name='시장거래대금')
+                        
+                        daily_market_val.index = pd.to_datetime(daily_market_val.index).date
+                        daily_market_val['시장거래대금(억)'] = daily_market_val['시장거래대금'] / 100_000_000
+                        
+                        # 기존 KRX 데이터의 LP 총 거래대금과 날짜별 병합
+                        lp_daily = df_t7.groupby(df_t7['거래일자'].dt.date)['총LP거래대금'].sum().to_frame(name='LP거래대금')
+                        lp_daily['LP거래대금(억)'] = lp_daily['LP거래대금'] / 100_000_000
+                        
+                        merged_df = daily_market_val.join(lp_daily, how='outer').fillna(0)
+                        
+                        # LP 관여율(%) 계산 = (LP거래대금 / 시장전체거래대금) * 100
+                        merged_df['LP관여율(%)'] = np.where(
+                            merged_df['시장거래대금'] > 0, 
+                            (merged_df['LP거래대금'] / merged_df['시장거래대금']) * 100, 
+                            0
+                        )
+                        merged_df = merged_df.reset_index().rename(columns={'index': '날짜'})
+                        
+                        # 차트 1: 시장 거래대금 vs LP 거래대금 (선 차트)
+                        fig_t7 = px.line(
+                            merged_df, x='날짜', y=['시장거래대금(억)', 'LP거래대금(억)'],
+                            title="시장 전체 거래대금 vs LP 총 거래대금 추이 (단위: 억원)",
+                            markers=True,
+                            labels={'value': '거래대금(억)', 'variable': '구분'}
+                        )
+                        st.plotly_chart(fig_t7, use_container_width=True)
+                        
+                        # 차트 2: LP 관여율 (막대 차트)
+                        fig_t7_ratio = px.bar(
+                            merged_df, x='날짜', y='LP관여율(%)',
+                            title="시장 거래대금 대비 LP 관여율 (%)",
+                            text=merged_df['LP관여율(%)'].apply(lambda x: f"{x:.1f}%"),
+                            color_discrete_sequence=['#ff9f43']
+                        )
+                        fig_t7_ratio.update_traces(textposition='outside')
+                        st.plotly_chart(fig_t7_ratio, use_container_width=True)
+                        
+                        # 세부 데이터 테이블
+                        st.dataframe(
+                            merged_df[['날짜', '시장거래대금(억)', 'LP거래대금(억)', 'LP관여율(%)']].style.format({
+                                '시장거래대금(억)': '{:,.0f}',
+                                'LP거래대금(억)': '{:,.0f}',
+                                'LP관여율(%)': '{:.2f}%'
+                            }), use_container_width=True, hide_index=True
+                        )
+                
+                except ImportError:
+                    st.error("🚨 `yfinance` 라이브러리가 설치되어 있지 않습니다. `requirements.txt`에 `yfinance`를 추가해주세요.")
+                except Exception as e:
+                    st.error(f"야후 파이낸스 데이터 처리 중 오류가 발생했습니다: {e}")
