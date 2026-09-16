@@ -375,6 +375,50 @@ def get_krx_market_data_direct(tickers_tuple, start_date_val, end_date_val):
         
     return pd.DataFrame()
 
+# ----------------------------------------------------------------------
+# 💡 [야후 파이낸스 연동] 한 번에 다중 종목을 다운로드하는 하이브리드 캐시 함수
+# ----------------------------------------------------------------------
+@st.cache_data(ttl=14400, show_spinner=False)
+def get_yfinance_market_data(tickers_tuple, start_date_val, end_date_val):
+    import yfinance as yf
+    import pandas as pd
+    import datetime
+
+    # 한국 종목코드 형식으로 변환 (.KS 추가)
+    yf_tickers = [f"{t}.KS" for t in tickers_tuple]
+    
+    # yfinance는 end_date 당일을 포함하지 않으므로 하루를 더해줍니다.
+    start_str = start_date_val.strftime('%Y-%m-%d')
+    end_date_yf = end_date_val + datetime.timedelta(days=1)
+    end_str = end_date_yf.strftime('%Y-%m-%d')
+    
+    try:
+        # 여러 종목을 한 번에 다운로드 (멀티스레딩 적용으로 속도 극대화)
+        df = yf.download(yf_tickers, start=start_str, end=end_str, threads=True)
+        
+        if df.empty:
+            return pd.DataFrame()
+
+        # 종목 수에 따라 yfinance가 반환하는 DataFrame 구조가 다름을 대응
+        if len(yf_tickers) == 1:
+            # 단일 종목일 경우
+            trading_value = df['Volume'] * df['Close']
+            daily_sum = trading_value.to_frame(name='시장거래대금')
+        else:
+            # 다중 종목일 경우 (MultiIndex DataFrame)
+            trading_value = df['Volume'] * df['Close']
+            # 모든 종목의 거래대금을 일자별로 합산
+            daily_sum = trading_value.sum(axis=1).to_frame(name='시장거래대금')
+        
+        # 병합을 위해 인덱스를 datetime.date 객체로 변환
+        daily_sum.index = pd.to_datetime(daily_sum.index).date
+        daily_sum.index.name = '거래일자'
+        
+        return daily_sum
+        
+    except Exception as e:
+        return pd.DataFrame()
+
 
 # ----------------------------------------------------------------------
 # 사이드바 (Global Date Filter)
@@ -929,7 +973,9 @@ with tab7:
                     tickers_tuple = tuple(target_etfs)
                     
                     # 💡 pykrx 에러 없는 순수 API 호출 함수
-                    daily_market_val = get_krx_market_data_direct(tickers_tuple, start_date, end_date)
+                    # daily_market_val = get_krx_market_data_direct(tickers_tuple, start_date, end_date)
+                    # 💡 야후 파이낸스 일괄 다운로드 함수로 변경 (속도 향상 및 차단 방지)
+                    daily_market_val = get_yfinance_market_data(tickers_tuple, start_date, end_date)
                     
                     if daily_market_val.empty:
                         st.error("데이터를 불러오지 못했습니다. 해당 기간에 영업일(평일)이 포함되어 있는지 확인해 주세요.")
