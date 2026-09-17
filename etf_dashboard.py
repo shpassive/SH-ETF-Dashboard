@@ -286,7 +286,7 @@ def get_krx_open_api_market_data(tickers, start_date, end_date):
                                     errors='coerce'
                                 ).fillna(0)
                                 
-                            daily_total = filtered_df['ACC_TRDVAL'].sum()
+                            daily_total = filtered_df['ACC_TRDVAL'].astype(float).sum()
                             all_data.append({'거래일자': pd.to_datetime(dt.date()), '시장거래대금': daily_total})
                             
         except Exception as e:
