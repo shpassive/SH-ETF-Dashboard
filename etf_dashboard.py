@@ -749,13 +749,14 @@ with tab7:
                         st.dataframe(merged_df[['날짜', '시장거래대금(억)', 'LP거래대금(억)', 'LP관여율(%)']].style.format({'시장거래대금(억)': '{:,.0f}', 'LP거래대금(억)': '{:,.0f}', 'LP관여율(%)': '{:.2f}%'}), use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
+                    
 
 # ==========================================
 # Tab 8: 설정/환매 추이 추정
 # ==========================================
 with tab8:
     st.subheader("🔄 ETF별 설정/환매 추이 추정")
-    st.write("선택하신 기준 기간 동안의 **(상장좌수 변동) × (평균 순자산가치)** 공식을 활용하여 종목별 펀드 설정 및 환매 자금 규모를 추정합니다.")
+    st.write("선택하신 기준 기간 동안의 **(상장좌수 변동) × (평균 순자산가치)** 공식을 활용하여 종목별 순설정 자금 규모를 추정합니다.")
     
     st.write("▼ **필터 조건 설정**")
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -790,7 +791,7 @@ with tab8:
         calc_end_date = end_date
         st.info(f"📅 **기간 조회 선택됨:** **{calc_start_date}**부터 **{calc_end_date}**까지의 변동을 계산합니다.")
     
-    if st.button("📊 설정/환매 자금 추정 테이블 생성", type="primary", key="btn_t8"):
+    if st.button("📊 순설정 자금 추정 테이블 생성", type="primary", key="btn_t8"):
         if "KRX_API_KEY" not in st.secrets:
             st.error("⚠️ `.streamlit/secrets.toml` 파일에 `KRX_API_KEY` 설정이 필요합니다.")
         elif len(target_etfs_t8) == 0:
@@ -834,8 +835,8 @@ with tab8:
                         res_df['평균NAV'] = (ds_start['NAV'] + ds_end['NAV']) / 2
                         res_df['추정대금(원)'] = res_df['좌수증감'] * res_df['평균NAV']
                         res_df['추정대금(억)'] = res_df['추정대금(원)'] / 100_000_000
-                        res_df['설정(억)'] = np.where(res_df['추정대금(억)'] > 0, res_df['추정대금(억)'], 0)
-                        res_df['환매(억)'] = np.where(res_df['추정대금(억)'] < 0, np.abs(res_df['추정대금(억)']), 0)
+                        
+                        # 순설정액만 단독으로 유지
                         res_df['순설정(억)'] = res_df['추정대금(억)']
                         
                         res_df = res_df.sort_values('순설정(억)', ascending=False).reset_index()
@@ -850,8 +851,8 @@ with tab8:
                             return ''
                             
                         st.dataframe(
-                            res_df[['단축코드', '종목명', '설정(억)', '환매(억)', '순설정(억)']].style
-                            .format({'설정(억)': '{:,.0f}', '환매(억)': '{:,.0f}', '순설정(억)': '{:,.0f}'})
+                            res_df[['단축코드', '종목명', '순설정(억)']].style
+                            .format({'순설정(억)': '{:,.0f}'})
                             .map(highlight_net, subset=['순설정(억)']),
                             use_container_width=True, hide_index=True
                         )
@@ -863,7 +864,7 @@ with tab8:
     selected_etf_t8 = st.selectbox("일자별 분석을 진행할 ETF를 선택하세요:", ["선택 안함"] + etf_options_list)
     
     if selected_etf_t8 != "선택 안함":
-        target_code_t8 = selected_etf_str.split("]")[0][1:] if 'selected_etf_str' in locals() else selected_etf_t8.split("]")[0][1:]
+        target_code_t8 = selected_etf_t8.split("]")[0][1:]
         target_name_t8 = selected_etf_t8.split("] ")[1]
         
         if st.button(f"'{target_name_t8}' 상세 분석 실행", type="primary", key="btn_t8_detail"):
@@ -884,18 +885,11 @@ with tab8:
                         df_daily['평균NAV'] = (df_daily['NAV'] + df_daily['prev_NAV']) / 2
                         df_daily['추정대금(원)'] = df_daily['좌수증감'] * df_daily['평균NAV']
                         df_daily['추정대금(억)'] = df_daily['추정대금(원)'] / 100_000_000
-                        df_daily['설정(억)'] = np.where(df_daily['추정대금(억)'] > 0, df_daily['추정대금(억)'], 0)
-                        df_daily['환매(억)'] = np.where(df_daily['추정대금(억)'] < 0, np.abs(df_daily['추정대금(억)']), 0)
                         df_daily['순설정(억)'] = df_daily['추정대금(억)']
                         
-                        total_creation = df_daily['설정(억)'].sum()
-                        total_redemption = df_daily['환매(억)'].sum()
                         total_net = df_daily['순설정(억)'].sum()
                         
-                        col1, col2, col3 = st.columns(3)
-                        col1.metric("선택 기간 누적 설정", f"{total_creation:,.0f} 억원")
-                        col2.metric("선택 기간 누적 환매", f"{total_redemption:,.0f} 억원")
-                        col3.metric("선택 기간 순설정 합계", f"{total_net:,.0f} 억원")
+                        st.metric("선택 기간 순설정 합계", f"{total_net:,.0f} 억원")
                         
                         df_daily['날짜_str'] = df_daily['날짜'].dt.strftime('%Y-%m-%d')
                         df_daily['구분'] = np.where(df_daily['순설정(억)'] >= 0, '설정(+)', '환매(-)')
@@ -907,6 +901,7 @@ with tab8:
                             labels={'날짜_str': '영업일', '순설정(억)': '순설정 대금(억)'}
                         )
                         st.plotly_chart(fig, use_container_width=True)
+
 
 # ==========================================
 # Tab 9: NAV 괴리율 조회 (신규 탭)
