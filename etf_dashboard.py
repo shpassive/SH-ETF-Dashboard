@@ -18,7 +18,7 @@ from datetime import timedelta
 # ----------------------------------------------------------------------
 # 페이지 기본 설정
 # ----------------------------------------------------------------------
-st.set_page_config(page_title="ETF Market Monitoring (v7.3)", layout="wide")
+st.set_page_config(page_title="ETF Market Monitoring (v7.4)", layout="wide")
 st.title("📊 ETF Market Monitoring Dashboard (통합판)")
 
 # ----------------------------------------------------------------------
@@ -868,24 +868,25 @@ with tab7:
         elif total_found_cnt == 0:
             st.warning("선택된 종목이 없습니다. 필터를 변경해주세요.")
         else:
-            with st.spinner("KRX Open API에서 데이터를 실시간 수집 중입니다..."):
+            # 💡 [핵심 추가] 버튼 누르자마자 뜨는 강력한 밴(Ban) 방지 경고창
+            st.warning("⏳ **API 밴(Ban) 방지를 위해 데이터를 안전한 속도로 가져오고 있습니다. 로딩 중에 버튼을 여러 번 누르지 마세요! (최대 30초 소요)**")
+            
+            with st.spinner("KRX Open API에서 데이터를 실시간 수집 중입니다... (🚨 과부하 방지를 위해 연타 금지)"):
                 try:
                     tickers_tuple = tuple(target_etfs)
                     
-                    # KRX Open API 데이터 추출
+                    # KRX Open API 데이터 추출[cite: 2]
                     daily_market_val = get_krx_open_api_market_data(tickers_tuple, start_date, end_date)
                     
                     if daily_market_val.empty:
                         st.error("데이터를 불러오지 못했습니다. API Key가 올바른지, 혹은 해당 기간에 영업일이 포함되었는지 확인해 주세요.")
                     else:
-                        # 💡 [핵심 수정 1] 숫자 타입 강제 변환 (문자열 연산 에러 방지)[cite: 1]
                         daily_market_val['시장거래대금'] = pd.to_numeric(daily_market_val['시장거래대금'], errors='coerce').fillna(0)
                         daily_market_val['시장거래대금(억)'] = daily_market_val['시장거래대금'] / 100_000_000
                         
                         # 기존 LP 데이터 합산
                         lp_daily = df_t7.groupby(df_t7['거래일자'])['총LP거래대금'].sum().to_frame(name='LP거래대금')
                         
-                        # 💡 [핵심 수정 2] LP거래대금 안전 변환 및 스케일 조정 (매수+매도 합산이므로 시장 거래대금과 맞추기 위해 / 2)
                         lp_daily['LP거래대금'] = pd.to_numeric(lp_daily['LP거래대금'], errors='coerce').fillna(0)
                         lp_daily['LP거래대금'] = lp_daily['LP거래대금'] / 2
                         lp_daily['LP거래대금(억)'] = lp_daily['LP거래대금'] / 100_000_000
