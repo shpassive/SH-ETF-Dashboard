@@ -14,12 +14,11 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import requests
 from datetime import timedelta
-import time
 
 # ----------------------------------------------------------------------
 # 페이지 기본 설정
 # ----------------------------------------------------------------------
-st.set_page_config(page_title="ETF Market Monitoring (v7.2)", layout="wide")
+st.set_page_config(page_title="ETF Market Monitoring (v7.3)", layout="wide")
 st.title("📊 ETF Market Monitoring Dashboard (통합판)")
 
 # ----------------------------------------------------------------------
@@ -250,25 +249,22 @@ def get_krx_open_api_market_data(tickers, start_date, end_date):
 
     url = "https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd"
     
-    # 💡 AUTH_KEY 헤더 및 AUTH-KEY 모두 대용
     headers = {
         "AUTH_KEY": api_key,
         "AUTH-KEY": api_key
     }
     
-    # 평일(영업일) 기준으로 조회 날짜 생성
     date_list = pd.date_range(start=start_date, end=end_date, freq='B')
     
     all_data = []
     
-    # 6자리 단축코드 리스트 생성 (예: '069500')
     clean_tickers = [str(t).strip().zfill(6) for t in tickers]
     
     for dt in date_list:
         basDd = dt.strftime('%Y%m%d')
         params = {
             "basDd": basDd,
-            "AUTH_KEY": api_key  # Query Parameter로도 함께 전달
+            "AUTH_KEY": api_key
         }
         
         try:
@@ -280,11 +276,7 @@ def get_krx_open_api_market_data(tickers, start_date, end_date):
                     df_day = pd.DataFrame(data["OutBlock_1"])
                     
                     if not df_day.empty and 'ISU_CD' in df_day.columns:
-                        # 💡 핵심 수정: ISU_CD(표준코드 또는 단축코드)에서 6자리 종목코드가 포함되어 있는지 확인
-                        # 예: 'KR7069500007' 안에 '069500'이 들어있는지 체크
                         df_day['short_code'] = df_day['ISU_CD'].astype(str).str.extract(r'(\d{6})')[0]
-                        
-                        # 타겟 종목 필터링
                         filtered_df = df_day[df_day['short_code'].isin(clean_tickers)]
                         
                         if not filtered_df.empty:
@@ -321,18 +313,16 @@ max_val = df['거래일자'].max()
 min_date = min_val.date() if hasattr(min_val, 'date') else pd.to_datetime(min_val).date()
 max_date = max_val.date() if hasattr(max_val, 'date') else pd.to_datetime(max_val).date()
 
-# 💡 1. 조회 방식 선택 라디오 버튼 추가
 search_type = st.sidebar.radio(
     "조회 방식을 선택하세요",
     ["기간 조회", "특정 일자 조회"],
     horizontal=True
 )
 
-# 💡 2. 선택된 방식에 따라 달력 UI 다르게 렌더링
 if search_type == "기간 조회":
     date_selection = st.sidebar.date_input(
         "조회 기간을 선택하세요", 
-        [min_date, max_date], # 기본값: 전체 기간
+        [min_date, max_date], 
         min_value=min_date,
         max_value=max_date
     )
@@ -341,18 +331,16 @@ if search_type == "기간 조회":
     else:
         start_date = end_date = date_selection[0]
         
-else: # 특정 일자 조회
+else: 
     single_date = st.sidebar.date_input(
         "조회할 일자를 선택하세요",
-        max_date, # 기본값: 가장 최근 날짜
+        max_date, 
         min_value=min_date,
         max_value=max_date
     )
-    # 특정 일자이므로 시작일과 종료일을 동일하게 설정
     start_date = single_date
     end_date = single_date
 
-# 💡 3. 하위 로직(데이터 필터링 및 Tab 7 API 호출용)에 그대로 적용
 df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'].dt.date <= end_date)].copy()
 
 
@@ -890,11 +878,16 @@ with tab7:
                     if daily_market_val.empty:
                         st.error("데이터를 불러오지 못했습니다. API Key가 올바른지, 혹은 해당 기간에 영업일이 포함되었는지 확인해 주세요.")
                     else:
-                        # 원(KRW) -> 억원 변환
+                        # 💡 [핵심 수정 1] 숫자 타입 강제 변환 (문자열 연산 에러 방지)[cite: 1]
+                        daily_market_val['시장거래대금'] = pd.to_numeric(daily_market_val['시장거래대금'], errors='coerce').fillna(0)
                         daily_market_val['시장거래대금(억)'] = daily_market_val['시장거래대금'] / 100_000_000
                         
                         # 기존 LP 데이터 합산
                         lp_daily = df_t7.groupby(df_t7['거래일자'])['총LP거래대금'].sum().to_frame(name='LP거래대금')
+                        
+                        # 💡 [핵심 수정 2] LP거래대금 안전 변환 및 스케일 조정 (매수+매도 합산이므로 시장 거래대금과 맞추기 위해 / 2)
+                        lp_daily['LP거래대금'] = pd.to_numeric(lp_daily['LP거래대금'], errors='coerce').fillna(0)
+                        lp_daily['LP거래대금'] = lp_daily['LP거래대금'] / 2
                         lp_daily['LP거래대금(억)'] = lp_daily['LP거래대금'] / 100_000_000
                         
                         # 데이터 병합
@@ -914,7 +907,7 @@ with tab7:
                         # 차트 1: 선 차트
                         fig_t7 = px.line(
                             merged_df, x='날짜', y=['시장거래대금(억)', 'LP거래대금(억)'],
-                            title="선택 섹터 KRX 공식 시장 거래대금 vs LP 총 거래대금 추이 (단위: 억원)",
+                            title="선택 섹터 KRX 공식 시장 거래대금 vs LP 총 거래대금(조정됨) 추이 (단위: 억원)",
                             markers=True,
                             labels={'value': '거래대금(억)', 'variable': '구분'}
                         )
