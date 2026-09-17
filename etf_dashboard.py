@@ -18,7 +18,7 @@ from datetime import timedelta
 # ----------------------------------------------------------------------
 # 페이지 기본 설정
 # ----------------------------------------------------------------------
-st.set_page_config(page_title="ETF Market Monitoring (v7.4)", layout="wide")
+st.set_page_config(page_title="ETF Market Monitoring (v8.0)", layout="wide")
 st.title("📊 ETF Market Monitoring Dashboard (통합판)")
 
 # ----------------------------------------------------------------------
@@ -237,69 +237,88 @@ if df.empty:
     st.stop()
 
 
-
+# ----------------------------------------------------------------------
+# 4. KRX Open API 연동 함수들
+# ----------------------------------------------------------------------
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_krx_open_api_market_data(tickers, start_date, end_date):
     """
-    KRX Open API(etf_bydd_trd)를 통해 선택한 기간과 종목들의 시장 거래대금 합계를 가져옵니다.
+    KRX Open API(etf_bydd_trd)를 통해 선택한 기간과 종목들의 일별 거래대금 합계를 가져옵니다.
     """
     api_key = st.secrets.get("KRX_API_KEY")
-    if not api_key:
-        return pd.DataFrame()
+    if not api_key: return pd.DataFrame()
 
     url = "https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd"
-    
-    headers = {
-        "AUTH_KEY": api_key,
-        "AUTH-KEY": api_key
-    }
-    
+    headers = {"AUTH_KEY": api_key, "AUTH-KEY": api_key}
     date_list = pd.date_range(start=start_date, end=end_date, freq='B')
     
     all_data = []
-    
     clean_tickers = [str(t).strip().zfill(6) for t in tickers]
     
     for dt in date_list:
         basDd = dt.strftime('%Y%m%d')
-        params = {
-            "basDd": basDd,
-            "AUTH_KEY": api_key
-        }
+        params = {"basDd": basDd, "AUTH_KEY": api_key}
         
         try:
             response = requests.get(url, headers=headers, params=params, timeout=10)
-            
             if response.status_code == 200:
                 data = response.json()
                 if "OutBlock_1" in data:
                     df_day = pd.DataFrame(data["OutBlock_1"])
-                    
                     if not df_day.empty and 'ISU_CD' in df_day.columns:
                         df_day['short_code'] = df_day['ISU_CD'].astype(str).str.extract(r'(\d{6})')[0]
                         filtered_df = df_day[df_day['short_code'].isin(clean_tickers)]
                         
-                        if not filtered_df.empty:
-                            if filtered_df['ACC_TRDVAL'].dtype == object:
-                                filtered_df['ACC_TRDVAL'] = pd.to_numeric(
-                                    filtered_df['ACC_TRDVAL'].astype(str).str.replace(',', ''), 
-                                    errors='coerce'
-                                ).fillna(0)
-                                
-                            daily_total = filtered_df['ACC_TRDVAL'].astype(float).sum()
+                        if not filtered_df.empty and 'ACC_TRDVAL' in filtered_df.columns:
+                            trd_vals = pd.to_numeric(filtered_df['ACC_TRDVAL'].astype(str).str.replace(',', '', regex=False), errors='coerce').fillna(0)
+                            daily_total = trd_vals.sum()
                             all_data.append({'거래일자': pd.to_datetime(dt.date()), '시장거래대금': daily_total})
-                            
-        except Exception as e:
+        except Exception:
             pass
-            
         time.sleep(0.15)
             
     if all_data:
         result_df = pd.DataFrame(all_data)
         result_df.set_index('거래일자', inplace=True)
+        result_df = result_df.replace([np.inf, -np.inf], np.nan).fillna(0)
         return result_df
     else:
         return pd.DataFrame()
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_krx_snapshot(target_date):
+    """
+    지정된 날짜 기준 가장 최근 영업일의 KRX ETF 전종목 스냅샷 데이터(NAV, 상장좌수 등)를 가져옵니다.
+    """
+    api_key = st.secrets.get("KRX_API_KEY")
+    if not api_key: return pd.DataFrame()
+    
+    url = "https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd"
+    headers = {"AUTH_KEY": api_key, "AUTH-KEY": api_key}
+    
+    # 휴장일을 대비해 최대 7일 전까지 탐색하여 최초로 응답받는 영업일 데이터를 반환
+    for i in range(7):
+        dt = pd.to_datetime(target_date) - timedelta(days=i)
+        if dt.weekday() >= 5: # 토, 일요일 패스
+            continue
+            
+        basDd = dt.strftime('%Y%m%d')
+        params = {"basDd": basDd, "AUTH_KEY": api_key}
+        
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if "OutBlock_1" in data and len(data["OutBlock_1"]) > 0:
+                    df = pd.DataFrame(data["OutBlock_1"])
+                    df['query_date'] = dt.date()
+                    return df
+        except Exception:
+            pass
+        time.sleep(0.1)
+        
+    return pd.DataFrame()
 
 
 # ----------------------------------------------------------------------
@@ -345,12 +364,12 @@ df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'
 
 
 # ----------------------------------------------------------------------
-# UI Tabs 구성
+# UI Tabs 구성 (8번 탭 추가)
 # ----------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "1. 종합 대시보드", "2. ETF 구분별 분석", "3. LP사 다각도 분석", 
     "4. ETF별 주력 LP 분석", "5. 운용사별 주력 ETF 분석",
-    "6. 종목 집중도 분석", "7. 시장 전체 거래대금 (KRX)"
+    "6. 종목 집중도 분석", "7. 시장 전체 거래대금 (KRX)", "8. 설정/환매 추이 (추정)"
 ])
 
 # ==========================================
@@ -862,20 +881,17 @@ with tab7:
     
     st.info(f"선택된 필터 조건 대상 ETF 종목 수: **{total_found_cnt} 개**")
     
-    if st.button("📊 KRX Open API 데이터로 정확하게 분석하기", type="primary"):
+    if st.button("📊 KRX Open API 데이터로 정확하게 분석하기", type="primary", key="btn_t7"):
         if "KRX_API_KEY" not in st.secrets:
             st.error("⚠️ `.streamlit/secrets.toml` 파일에 `KRX_API_KEY` 설정이 필요합니다.")
         elif total_found_cnt == 0:
             st.warning("선택된 종목이 없습니다. 필터를 변경해주세요.")
         else:
-            # 💡 [핵심 추가] 버튼 누르자마자 뜨는 강력한 밴(Ban) 방지 경고창
             st.warning("⏳ **API 밴(Ban) 방지를 위해 데이터를 안전한 속도로 가져오고 있습니다. 로딩 중에 버튼을 여러 번 누르지 마세요! (최대 30초 소요)**")
             
             with st.spinner("KRX Open API에서 데이터를 실시간 수집 중입니다... (🚨 과부하 방지를 위해 연타 금지)"):
                 try:
                     tickers_tuple = tuple(target_etfs)
-                    
-                    # KRX Open API 데이터 추출[cite: 2]
                     daily_market_val = get_krx_open_api_market_data(tickers_tuple, start_date, end_date)
                     
                     if daily_market_val.empty:
@@ -884,28 +900,23 @@ with tab7:
                         daily_market_val['시장거래대금'] = pd.to_numeric(daily_market_val['시장거래대금'], errors='coerce').fillna(0)
                         daily_market_val['시장거래대금(억)'] = daily_market_val['시장거래대금'] / 100_000_000
                         
-                        # 기존 LP 데이터 합산
                         lp_daily = df_t7.groupby(df_t7['거래일자'])['총LP거래대금'].sum().to_frame(name='LP거래대금')
                         
                         lp_daily['LP거래대금'] = pd.to_numeric(lp_daily['LP거래대금'], errors='coerce').fillna(0)
                         lp_daily['LP거래대금'] = lp_daily['LP거래대금'] / 2
                         lp_daily['LP거래대금(억)'] = lp_daily['LP거래대금'] / 100_000_000
                         
-                        # 데이터 병합
                         merged_df = daily_market_val.join(lp_daily, how='outer').fillna(0)
                         
-                        # LP 관여율(%) 계산
                         merged_df['LP관여율(%)'] = np.where(
                             merged_df['시장거래대금'] > 0, 
                             (merged_df['LP거래대금'] / merged_df['시장거래대금']) * 100, 
                             0
                         )
                         
-                        # 인덱스 정리 및 '날짜' 컬럼 생성
                         merged_df = merged_df.reset_index().rename(columns={'거래일자': '날짜', 'index': '날짜'}) 
                         merged_df['날짜'] = pd.to_datetime(merged_df['날짜']).dt.date
                         
-                        # 차트 1: 선 차트
                         fig_t7 = px.line(
                             merged_df, x='날짜', y=['시장거래대금(억)', 'LP거래대금(억)'],
                             title="선택 섹터 KRX 공식 시장 거래대금 vs LP 총 거래대금(조정됨) 추이 (단위: 억원)",
@@ -914,7 +925,6 @@ with tab7:
                         )
                         st.plotly_chart(fig_t7, use_container_width=True)
                         
-                        # 차트 2: 막대 차트 (LP 관여율)
                         fig_t7_ratio = px.bar(
                             merged_df, x='날짜', y='LP관여율(%)',
                             title="KRX 공식 시장 거래대금 대비 LP 관여율 (%)",
@@ -924,7 +934,6 @@ with tab7:
                         fig_t7_ratio.update_traces(textposition='outside')
                         st.plotly_chart(fig_t7_ratio, use_container_width=True)
                         
-                        # 데이터 테이블
                         st.dataframe(
                             merged_df[['날짜', '시장거래대금(억)', 'LP거래대금(억)', 'LP관여율(%)']].style.format({
                                 '시장거래대금(억)': '{:,.0f}',
@@ -935,3 +944,133 @@ with tab7:
                 
                 except Exception as e:
                     st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
+
+# ==========================================
+# Tab 8: 설정/환매 추이 추정 (신규 탭)
+# ==========================================
+with tab8:
+    st.subheader("🔄 ETF별 설정/환매 추이 추정")
+    st.write("선택하신 기준 기간 동안의 **(상장좌수 변동) × (평균 순자산가치)** 공식을 활용하여 종목별 펀드 설정 및 환매 자금 규모를 추정합니다.")
+    
+    st.write("▼ **필터 조건 설정**")
+    
+    c1, c2, c3, c4, c5 = st.columns(5)
+    mkt_filter_t8 = c1.selectbox("국내/해외", ["전체"] + list(df_filtered['market'].unique()), key='t8_mkt')
+    ast_filter_t8 = c2.selectbox("주식/그외", ["전체"] + list(df_filtered['asset'].unique()), key='t8_ast')
+    rep_filter_t8 = c3.selectbox("대표지수", ["전체"] + list(df_filtered['is_rep'].unique()), key='t8_rep')
+    drv_filter_t8 = c4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t8_drv')
+    trk_filter_t8 = c5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t8_trk')
+    
+    amc_list_t8 = sorted([a for a in df_filtered['amc'].unique() if a != '미분류'])
+    target_amcs_t8 = st.multiselect("운용사(AMC) 다중 선택 (비워두면 조건 내 전체 종목 조회)", amc_list_t8, key='t8_amc')
+    
+    # 필터 적용
+    df_t8 = df_filtered.copy()
+    if mkt_filter_t8 != "전체": df_t8 = df_t8[df_t8['market'] == mkt_filter_t8]
+    if ast_filter_t8 != "전체": df_t8 = df_t8[df_t8['asset'] == ast_filter_t8]
+    if rep_filter_t8 != "전체": df_t8 = df_t8[df_t8['is_rep'] == rep_filter_t8]
+    if drv_filter_t8 != "전체": df_t8 = df_t8[df_t8['deriv'] == drv_filter_t8]
+    if trk_filter_t8 != "전체": df_t8 = df_t8[df_t8['tracking'] == trk_filter_t8]
+    if target_amcs_t8: df_t8 = df_t8[df_t8['amc'].isin(target_amcs_t8)]
+    
+    target_etfs_t8 = [code.replace('A', '') for code in df_t8['a_code'].unique()]
+    
+    st.divider()
+    
+    # 시작일/종료일 스마트 매핑
+    if search_type == "특정 일자 조회":
+        # 단일 날짜 선택 시, 시작일을 '직전 영업일'로 계산
+        calc_start_date = start_date - timedelta(days=1)
+        while calc_start_date.weekday() >= 5:  # 주말 건너뛰기
+            calc_start_date -= timedelta(days=1)
+        calc_end_date = end_date
+        st.info(f"📅 **단일 일자 선택됨:** 직전 영업일인 **{calc_start_date}**부터 조회일인 **{calc_end_date}**까지의 변동을 계산합니다.")
+    else:
+        calc_start_date = start_date
+        calc_end_date = end_date
+        st.info(f"📅 **기간 조회 선택됨:** **{calc_start_date}**부터 **{calc_end_date}**까지의 변동을 계산합니다.")
+    
+    if st.button("📊 설정/환매 자금 추정 테이블 생성", type="primary", key="btn_t8"):
+        if "KRX_API_KEY" not in st.secrets:
+            st.error("⚠️ `.streamlit/secrets.toml` 파일에 `KRX_API_KEY` 설정이 필요합니다.")
+        elif len(target_etfs_t8) == 0:
+            st.warning("선택하신 조건에 해당하는 종목이 없습니다. 필터를 변경해 주세요.")
+        else:
+            st.warning("⏳ **데이터 스냅샷을 조회 중입니다. 로딩 중에 버튼을 연타하지 마세요! (약 5초 소요)**")
+            with st.spinner("KRX API에서 상장좌수 및 NAV 스냅샷을 수집 중입니다..."):
+                
+                # 시작일과 종료일 단 2번의 API 호출 (최적화)
+                df_start = get_krx_snapshot(calc_start_date)
+                df_end = get_krx_snapshot(calc_end_date)
+                
+                if df_start.empty or df_end.empty:
+                    st.error("해당 기간의 데이터를 KRX에서 불러오지 못했습니다. 장 휴장일이거나 범위를 벗어났을 수 있습니다.")
+                else:
+                    def extract_snap_data(df_snap):
+                        df_snap['ISU_CD'] = df_snap['ISU_CD'].astype(str)
+                        df_snap['short_code'] = df_snap['ISU_CD'].str.extract(r'(\d{6})')[0]
+                        
+                        # API 리턴 키값의 유연성을 위한 대체 탐색 (NAV, LIST_SHRS 등)
+                        nav_col = next((c for c in ['NAV', 'TDD_NAV', 'IDX_NAV'] if c in df_snap.columns), None)
+                        share_col = next((c for c in ['LIST_SHRS', 'LST_SHRS', 'LST_STK_VL'] if c in df_snap.columns), None)
+                        
+                        df_res = pd.DataFrame()
+                        df_res['short_code'] = df_snap['short_code']
+                        df_res['ISU_NM'] = df_snap.get('ISU_NM', df_snap.get('ISU_ABBRV', ''))
+                        
+                        df_res['NAV'] = pd.to_numeric(df_snap[nav_col].astype(str).str.replace(',', '', regex=False), errors='coerce').fillna(0) if nav_col else 0
+                        df_res['SHARES'] = pd.to_numeric(df_snap[share_col].astype(str).str.replace(',', '', regex=False), errors='coerce').fillna(0) if share_col else 0
+                        
+                        return df_res.drop_duplicates('short_code').set_index('short_code')
+                        
+                    ds_start = extract_snap_data(df_start)
+                    ds_end = extract_snap_data(df_end)
+                    
+                    # 대상 종목 교집합 필터링
+                    common_idx = [t for t in target_etfs_t8 if t in ds_start.index and t in ds_end.index]
+                    
+                    if not common_idx:
+                        st.warning("선택하신 종목들에 대한 API 스냅샷 데이터를 찾을 수 없습니다.")
+                    else:
+                        ds_start = ds_start.loc[common_idx]
+                        ds_end = ds_end.loc[common_idx]
+                        
+                        res_df = pd.DataFrame(index=common_idx)
+                        res_df['종목명'] = ds_end['ISU_NM']
+                        res_df['좌수증감'] = ds_end['SHARES'] - ds_start['SHARES']
+                        res_df['평균NAV'] = (ds_start['NAV'] + ds_end['NAV']) / 2
+                        
+                        # 대금 계산 로직 적용
+                        res_df['추정대금(원)'] = res_df['좌수증감'] * res_df['평균NAV']
+                        res_df['추정대금(억)'] = res_df['추정대금(원)'] / 100_000_000
+                        
+                        # 설정액(+), 환매액(- -> +절대값), 순설정액 구분
+                        res_df['설정(억)'] = np.where(res_df['추정대금(억)'] > 0, res_df['추정대금(억)'], 0)
+                        res_df['환매(억)'] = np.where(res_df['추정대금(억)'] < 0, np.abs(res_df['추정대금(억)']), 0)
+                        res_df['순설정(억)'] = res_df['추정대금(억)']
+                        
+                        # 테이블 정렬 및 정리
+                        res_df = res_df.sort_values('순설정(억)', ascending=False).reset_index()
+                        res_df.rename(columns={'index': '단축코드'}, inplace=True)
+                        
+                        st.success(f"✅ 데이터 조회 완료! (시작 기준일: {df_start['query_date'].iloc[0]} / 종료 기준일: {df_end['query_date'].iloc[0]})")
+                        st.write(f"조회된 종목 수: **{len(res_df)} 개**")
+                        
+                        # Pandas Styler를 통한 조건부 서식 지정
+                        def highlight_net(val):
+                            if val > 0:
+                                return 'color: #10b981; font-weight: bold' # 그린
+                            elif val < 0:
+                                return 'color: #ef4444; font-weight: bold' # 레드
+                            return ''
+                            
+                        st.dataframe(
+                            res_df[['단축코드', '종목명', '설정(억)', '환매(억)', '순설정(억)']].style
+                            .format({
+                                '설정(억)': '{:,.0f}',
+                                '환매(억)': '{:,.0f}',
+                                '순설정(억)': '{:,.0f}'
+                            })
+                            .map(highlight_net, subset=['순설정(억)']),
+                            use_container_width=True, hide_index=True
+                        )
