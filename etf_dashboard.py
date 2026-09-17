@@ -909,13 +909,13 @@ with tab8:
                         st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# Tab 9: NAV 괴리율 조회 (특정 단일 일자 기준)
+# Tab 9: NAV 괴리율 조회 (신규 탭)
 # ==========================================
 with tab9:
     st.subheader("📐 ETF NAV vs 종가 괴리(Disparity) 분석")
     st.write("조회하고 싶은 **특정 단일 일자**를 선택하여, KRX 공식 **NAV와 종가의 차이(`NAV - 종가`)** 및 괴리율을 분석합니다.")
     
-    # 💡 9번 탭 전용 단일 날짜 선택기 추가 (사이드바와 독립적)
+    # 9번 탭 전용 단일 날짜 선택기
     target_snap_date = st.date_input(
         "괴리율을 조회할 기준 일자를 선택하세요",
         value=max_date,
@@ -965,7 +965,8 @@ with tab9:
                     df_snap['short_code'] = df_snap['ISU_CD'].str.extract(r'(\d{6})')[0]
                     
                     nav_col = next((c for c in ['NAV', 'TDD_NAV', 'IDX_NAV'] if c in df_snap.columns), None)
-                    close_col = next((c for c in ['TDD_CLPR', 'CLPR', 'STCK_PRC'] if c in df_snap.columns), None)
+                    # 💡 실제 응답 컬럼인 'TDD_CLSPRC' 우선 탐색 반영
+                    close_col = next((c for c in ['TDD_CLSPRC', 'TDD_CLPR', 'CLPR', 'STCK_PRC'] if c in df_snap.columns), None)
                     
                     if not nav_col or not close_col:
                         st.error(f"API 응답에서 NAV 또는 종가 컬럼을 찾을 수 없습니다. (발견된 컬럼: {list(df_snap.columns)})")
