@@ -653,29 +653,85 @@ with tab4:
         target_lp_df['누적점유율(%)'] = target_lp_df['점유율(%)'].cumsum()
         show_cols = ['회원사명', '대금(억)', '매도대금(억)', '매수대금(억)', '순매수대금(억)', '추정매매이익(백만)', '점유율(%)', '누적점유율(%)']
         st.dataframe(target_lp_df[show_cols].style.format({'대금(억)': '{:,.0f}', '매도대금(억)': '{:,.0f}', '매수대금(억)': '{:,.0f}', '순매수대금(억)': '{:,.0f}', '추정매매이익(백만)': '{:,.0f}', '점유율(%)': '{:.1f}%', '누적점유율(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
+        
 
+# ==========================================
+# Tab 5: 운용사별 주력 ETF 분석
+# ==========================================
 with tab5:
-    st.subheader("🏢 운용사(AMC)별 ETF 및 1~3위 핵심 파트너 LP")
-    amc_list = df_filtered.groupby('amc')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
-    target_amc = st.selectbox("운용사 선택", amc_list)
+    st.subheader("🏢 운용사(AMC)별 ETF 및 파트너 LP 분석")
+    
+    st.write("▼ **필터 조건 설정**")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    mkt_filter_t5 = c1.selectbox("국내/해외", ["전체"] + list(df_filtered['market'].unique()), key='t5_mkt')
+    ast_filter_t5 = c2.selectbox("주식/그외", ["전체"] + list(df_filtered['asset'].unique()), key='t5_ast')
+    rep_filter_t5 = c3.selectbox("대표지수", ["전체"] + list(df_filtered['is_rep'].unique()), key='t5_rep')
+    drv_filter_t5 = c4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t5_drv')
+    trk_filter_t5 = c5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t5_trk')
+    
+    # 필터 적용
+    df_t5 = df_filtered.copy()
+    if mkt_filter_t5 != "전체": df_t5 = df_t5[df_t5['market'] == mkt_filter_t5]
+    if ast_filter_t5 != "전체": df_t5 = df_t5[df_t5['asset'] == ast_filter_t5]
+    if rep_filter_t5 != "전체": df_t5 = df_t5[df_t5['is_rep'] == rep_filter_t5]
+    if drv_filter_t5 != "전체": df_t5 = df_t5[df_t5['deriv'] == drv_filter_t5]
+    if trk_filter_t5 != "전체": df_t5 = df_t5[df_t5['tracking'] == trk_filter_t5]
+
+    # 필터링된 데이터 기반으로 운용사 리스트 갱신
+    amc_list = df_t5.groupby('amc')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
+    target_amc = st.selectbox("운용사 선택", amc_list, key='t5_amc_sel')
+    
     if target_amc:
-        df_amc = df_filtered[df_filtered['amc'] == target_amc]
-        st.success(f"**{target_amc}** 총 거래대금: {df_amc['총LP거래대금'].sum()/100_000_000:,.0f} 억원")
-        result_data = []
-        for (a_code, name), group in df_amc.groupby(['a_code', '종목명']):
-            tot_vol = group['총LP거래대금'].sum()
-            if tot_vol == 0: continue
-            lp_rank = group.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False)
-            row = {'단축코드': a_code, '종목명': name, '총대금(억)': tot_vol / 100_000_000}
-            for i in range(3):
-                if i < len(lp_rank):
-                    row[f'{i+1}위_LP'] = lp_rank.index[i]
-                    row[f'{i+1}위_비중(%)'] = (lp_rank.values[i] / tot_vol) * 100
-                else:
-                    row[f'{i+1}위_LP'] = '-'
-                    row[f'{i+1}위_비중(%)'] = 0
-            result_data.append(row)
-        st.dataframe(pd.DataFrame(result_data).sort_values('총대금(억)', ascending=False).style.format({'총대금(억)': '{:,.0f}', '1위_비중(%)': '{:.1f}%', '2위_비중(%)': '{:.1f}%', '3위_비중(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
+        df_amc = df_t5[df_t5['amc'] == target_amc]
+        amc_tot_vol = df_amc['총LP거래대금'].sum()
+        st.success(f"**{target_amc}** (선택된 필터 기준) 총 거래대금: {amc_tot_vol/100_000_000:,.0f} 억원")
+        
+        if amc_tot_vol > 0:
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                st.write("### 🥇 LP사별 거래대금 및 M/S 비중")
+                lp_ms_df = df_amc.groupby('회원사명')['총LP거래대금'].sum().reset_index()
+                lp_ms_df = lp_ms_df[lp_ms_df['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)
+                lp_ms_df['거래대금(억)'] = lp_ms_df['총LP거래대금'] / 100_000_000
+                lp_ms_df['M/S(%)'] = (lp_ms_df['총LP거래대금'] / amc_tot_vol) * 100
+                
+                st.dataframe(
+                    lp_ms_df[['회원사명', '거래대금(억)', 'M/S(%)']].style.format({
+                        '거래대금(억)': '{:,.0f}',
+                        'M/S(%)': '{:.2f}%'
+                    }),
+                    use_container_width=True, hide_index=True
+                )
+                
+            with col2:
+                st.write("### 📊 개별 ETF 종목별 핵심 파트너 LP (1~3위)")
+                result_data = []
+                for (a_code, name), group in df_amc.groupby(['a_code', '종목명']):
+                    tot_vol = group['총LP거래대금'].sum()
+                    if tot_vol == 0: continue
+                    lp_rank = group.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False)
+                    row = {'단축코드': a_code, '종목명': name, '총대금(억)': tot_vol / 100_000_000}
+                    for i in range(3):
+                        if i < len(lp_rank):
+                            row[f'{i+1}위_LP'] = lp_rank.index[i]
+                            row[f'{i+1}위_비중(%)'] = (lp_rank.values[i] / tot_vol) * 100
+                        else:
+                            row[f'{i+1}위_LP'] = '-'
+                            row[f'{i+1}위_비중(%)'] = 0
+                    result_data.append(row)
+                    
+                st.dataframe(
+                    pd.DataFrame(result_data).sort_values('총대금(억)', ascending=False).style.format({
+                        '총대금(억)': '{:,.0f}', 
+                        '1위_비중(%)': '{:.1f}%', 
+                        '2위_비중(%)': '{:.1f}%', 
+                        '3위_비중(%)': '{:.1f}%'
+                    }), 
+                    use_container_width=True, hide_index=True
+                )
+        else:
+            st.warning("선택하신 필터 조건에 해당하는 거래 내역이 없습니다.")
 
 with tab6:
     st.subheader("🎯 종목 집중도 (HHI 및 Top-N 의존도)")
