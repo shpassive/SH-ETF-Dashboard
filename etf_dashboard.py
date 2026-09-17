@@ -18,7 +18,7 @@ from datetime import timedelta
 # ----------------------------------------------------------------------
 # 페이지 기본 설정
 # ----------------------------------------------------------------------
-st.set_page_config(page_title="ETF Market Monitoring (v8.1)", layout="wide")
+st.set_page_config(page_title="ETF Market Monitoring (v9.0)", layout="wide")
 st.title("📊 ETF Market Monitoring Dashboard (통합판)")
 
 # ----------------------------------------------------------------------
@@ -242,9 +242,6 @@ if df.empty:
 # ----------------------------------------------------------------------
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_krx_open_api_market_data(tickers, start_date, end_date):
-    """
-    KRX Open API(etf_bydd_trd)를 통해 선택한 기간과 종목들의 일별 거래대금 합계를 가져옵니다.
-    """
     api_key = st.secrets.get("KRX_API_KEY")
     if not api_key: return pd.DataFrame()
 
@@ -288,20 +285,15 @@ def get_krx_open_api_market_data(tickers, start_date, end_date):
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_krx_snapshot(target_date):
-    """
-    지정된 날짜 기준 가장 최근 영업일의 KRX ETF 전종목 스냅샷 데이터(NAV, 상장좌수 등)를 가져옵니다.
-    """
     api_key = st.secrets.get("KRX_API_KEY")
     if not api_key: return pd.DataFrame()
     
     url = "https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd"
     headers = {"AUTH_KEY": api_key, "AUTH-KEY": api_key}
     
-    # 휴장일을 대비해 최대 7일 전까지 탐색하여 최초로 응답받는 영업일 데이터를 반환
     for i in range(7):
         dt = pd.to_datetime(target_date) - timedelta(days=i)
-        if dt.weekday() >= 5: # 토, 일요일 패스
-            continue
+        if dt.weekday() >= 5: continue
             
         basDd = dt.strftime('%Y%m%d')
         params = {"basDd": basDd, "AUTH_KEY": api_key}
@@ -320,19 +312,15 @@ def get_krx_snapshot(target_date):
         
     return pd.DataFrame()
 
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_krx_daily_nav_shares(ticker, start_date, end_date):
-    """
-    특정 1개 종목에 대한 일자별 NAV 및 상장좌수 기록을 가져옵니다. 
-    (t-1일 변동 추적을 위해 시작일보다 10일 전부터 수집)
-    """
     api_key = st.secrets.get("KRX_API_KEY")
     if not api_key: return pd.DataFrame()
     
     url = "https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd"
     headers = {"AUTH_KEY": api_key, "AUTH-KEY": api_key}
     
-    # 전일(t-1) 데이터 확보를 위해 휴장일 감안 10일 정도 버퍼 부여
     extended_start = pd.to_datetime(start_date) - timedelta(days=10) 
     date_list = pd.date_range(start=extended_start, end=end_date, freq='B')
     
@@ -418,12 +406,12 @@ df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'
 
 
 # ----------------------------------------------------------------------
-# UI Tabs 구성 (8번 탭 추가)
+# UI Tabs 구성 (9번 탭 추가)
 # ----------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "1. 종합 대시보드", "2. ETF 구분별 분석", "3. LP사 다각도 분석", 
     "4. ETF별 주력 LP 분석", "5. 운용사별 주력 ETF 분석",
-    "6. 종목 집중도 분석", "7. 시장 전체 거래대금 (KRX)", "8. 설정/환매 추이 (추정)"
+    "6. 종목 집중도 분석", "7. 시장 전체 거래대금 (KRX)", "8. 설정/환매 추이 (추정)", "9. NAV 괴리율 조회"
 ])
 
 # ==========================================
@@ -763,7 +751,7 @@ with tab7:
                     st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
 
 # ==========================================
-# Tab 8: 설정/환매 추이 추정 (신규 탭 및 일자별 상세 추가)
+# Tab 8: 설정/환매 추이 추정
 # ==========================================
 with tab8:
     st.subheader("🔄 ETF별 설정/환매 추이 추정")
@@ -792,11 +780,9 @@ with tab8:
     
     st.divider()
     
-    # 💡 글로벌 Date 변수에서 시작일/종료일 스마트 매핑
     if search_type == "특정 일자 조회":
         calc_start_date = start_date - timedelta(days=1)
-        while calc_start_date.weekday() >= 5:
-            calc_start_date -= timedelta(days=1)
+        while calc_start_date.weekday() >= 5: calc_start_date -= timedelta(days=1)
         calc_end_date = end_date
         st.info(f"📅 **단일 일자 선택됨:** 직전 영업일인 **{calc_start_date}**부터 조회일인 **{calc_end_date}**까지의 변동을 계산합니다.")
     else:
@@ -804,7 +790,6 @@ with tab8:
         calc_end_date = end_date
         st.info(f"📅 **기간 조회 선택됨:** **{calc_start_date}**부터 **{calc_end_date}**까지의 변동을 계산합니다.")
     
-    # [파트 1] 전체 필터링 종목 누적 결과 테이블
     if st.button("📊 설정/환매 자금 추정 테이블 생성", type="primary", key="btn_t8"):
         if "KRX_API_KEY" not in st.secrets:
             st.error("⚠️ `.streamlit/secrets.toml` 파일에 `KRX_API_KEY` 설정이 필요합니다.")
@@ -813,7 +798,6 @@ with tab8:
         else:
             st.warning("⏳ **데이터 스냅샷을 조회 중입니다. 로딩 중에 버튼을 연타하지 마세요! (약 5초 소요)**")
             with st.spinner("KRX API에서 상장좌수 및 NAV 스냅샷을 수집 중입니다..."):
-                
                 df_start = get_krx_snapshot(calc_start_date)
                 df_end = get_krx_snapshot(calc_end_date)
                 
@@ -836,7 +820,6 @@ with tab8:
                         
                     ds_start = extract_snap_data(df_start)
                     ds_end = extract_snap_data(df_end)
-                    
                     common_idx = [t for t in target_etfs_t8 if t in ds_start.index and t in ds_end.index]
                     
                     if not common_idx:
@@ -849,10 +832,8 @@ with tab8:
                         res_df['종목명'] = ds_end['ISU_NM']
                         res_df['좌수증감'] = ds_end['SHARES'] - ds_start['SHARES']
                         res_df['평균NAV'] = (ds_start['NAV'] + ds_end['NAV']) / 2
-                        
                         res_df['추정대금(원)'] = res_df['좌수증감'] * res_df['평균NAV']
                         res_df['추정대금(억)'] = res_df['추정대금(원)'] / 100_000_000
-                        
                         res_df['설정(억)'] = np.where(res_df['추정대금(억)'] > 0, res_df['추정대금(억)'], 0)
                         res_df['환매(억)'] = np.where(res_df['추정대금(억)'] < 0, np.abs(res_df['추정대금(억)']), 0)
                         res_df['순설정(억)'] = res_df['추정대금(억)']
@@ -875,34 +856,25 @@ with tab8:
                             use_container_width=True, hide_index=True
                         )
 
-    # [파트 2] 특정 ETF 선택 후 일자별 상세 차트 분석
     st.divider()
     st.subheader("🔍 특정 ETF 일자별 설정/환매 상세 분석")
-    
     etf_options_t8 = df_t8[['a_code', '종목명']].drop_duplicates()
     etf_options_list = [f"[{row['a_code'].replace('A', '')}] {row['종목명']}" for _, row in etf_options_t8.iterrows()]
-    
     selected_etf_t8 = st.selectbox("일자별 분석을 진행할 ETF를 선택하세요:", ["선택 안함"] + etf_options_list)
     
     if selected_etf_t8 != "선택 안함":
-        target_code_t8 = selected_etf_t8.split("]")[0][1:]
+        target_code_t8 = selected_etf_str.split("]")[0][1:] if 'selected_etf_str' in locals() else selected_etf_t8.split("]")[0][1:]
         target_name_t8 = selected_etf_t8.split("] ")[1]
         
         if st.button(f"'{target_name_t8}' 상세 분석 실행", type="primary", key="btn_t8_detail"):
-            st.warning("⏳ **해당 종목의 과거 일별 데이터를 수집 중입니다. (조회 기간에 따라 10~30초 소요될 수 있습니다.)**")
+            st.warning("⏳ **해당 종목의 과거 일별 데이터를 수집 중입니다. (10~30초 소요)**")
             with st.spinner(f"[{target_name_t8}] 일별 변동 내역을 가져오는 중입니다..."):
-                
-                # 1. API 호출로 일별 데이터 취합
                 df_daily = get_krx_daily_nav_shares(target_code_t8, calc_start_date, calc_end_date)
-                
                 if df_daily.empty:
                     st.error("해당 종목의 기간 내 데이터를 찾을 수 없습니다.")
                 else:
-                    # 2. 전일 대비 변동 계산 로직 (t - (t-1))
                     df_daily['prev_SHARES'] = df_daily['SHARES'].shift(1)
                     df_daily['prev_NAV'] = df_daily['NAV'].shift(1)
-                    
-                    # 기준 시작일 이전 데이터는 shift(계산용)으로만 쓰고 뷰에서 제외
                     df_daily = df_daily[df_daily['날짜'].dt.date >= calc_start_date].copy()
                     
                     if df_daily.empty:
@@ -910,15 +882,12 @@ with tab8:
                     else:
                         df_daily['좌수증감'] = df_daily['SHARES'] - df_daily['prev_SHARES']
                         df_daily['평균NAV'] = (df_daily['NAV'] + df_daily['prev_NAV']) / 2
-                        
                         df_daily['추정대금(원)'] = df_daily['좌수증감'] * df_daily['평균NAV']
                         df_daily['추정대금(억)'] = df_daily['추정대금(원)'] / 100_000_000
-                        
                         df_daily['설정(억)'] = np.where(df_daily['추정대금(억)'] > 0, df_daily['추정대금(억)'], 0)
                         df_daily['환매(억)'] = np.where(df_daily['추정대금(억)'] < 0, np.abs(df_daily['추정대금(억)']), 0)
                         df_daily['순설정(억)'] = df_daily['추정대금(억)']
                         
-                        # 3. 누적 합산 메트릭 출력
                         total_creation = df_daily['설정(억)'].sum()
                         total_redemption = df_daily['환매(억)'].sum()
                         total_net = df_daily['순설정(억)'].sum()
@@ -928,7 +897,6 @@ with tab8:
                         col2.metric("선택 기간 누적 환매", f"{total_redemption:,.0f} 억원")
                         col3.metric("선택 기간 순설정 합계", f"{total_net:,.0f} 억원")
                         
-                        # 4. 차트 출력
                         df_daily['날짜_str'] = df_daily['날짜'].dt.strftime('%Y-%m-%d')
                         df_daily['구분'] = np.where(df_daily['순설정(억)'] >= 0, '설정(+)', '환매(-)')
                         
@@ -939,3 +907,114 @@ with tab8:
                             labels={'날짜_str': '영업일', '순설정(억)': '순설정 대금(억)'}
                         )
                         st.plotly_chart(fig, use_container_width=True)
+
+# ==========================================
+# Tab 9: NAV 괴리율 조회 (특정 단일 일자 기준)
+# ==========================================
+with tab9:
+    st.subheader("📐 ETF NAV vs 종가 괴리(Disparity) 분석")
+    st.write("조회하고 싶은 **특정 단일 일자**를 선택하여, KRX 공식 **NAV와 종가의 차이(`NAV - 종가`)** 및 괴리율을 분석합니다.")
+    
+    # 💡 9번 탭 전용 단일 날짜 선택기 추가 (사이드바와 독립적)
+    target_snap_date = st.date_input(
+        "괴리율을 조회할 기준 일자를 선택하세요",
+        value=max_date,
+        min_value=min_date,
+        max_value=max_date,
+        key='t9_date_picker'
+    )
+    
+    st.write("▼ **필터 조건 설정**")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    mkt_filter_t9 = c1.selectbox("국내/해외", ["전체"] + list(df_filtered['market'].unique()), key='t9_mkt')
+    ast_filter_t9 = c2.selectbox("주식/그외", ["전체"] + list(df_filtered['asset'].unique()), key='t9_ast')
+    rep_filter_t9 = c3.selectbox("대표지수", ["전체"] + list(df_filtered['is_rep'].unique()), key='t9_rep')
+    drv_filter_t9 = c4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t9_drv')
+    trk_filter_t9 = c5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t9_trk')
+    
+    amc_list_t9 = sorted([a for a in df_filtered['amc'].unique() if a != '미분류'])
+    target_amcs_t9 = st.multiselect("운용사(AMC) 다중 선택 (비워두면 조건 내 전체 종목 조회)", amc_list_t9, key='t9_amc')
+    
+    df_t9 = df_filtered.copy()
+    if mkt_filter_t9 != "전체": df_t9 = df_t9[df_t9['market'] == mkt_filter_t9]
+    if ast_filter_t9 != "전체": df_t9 = df_t9[df_t9['asset'] == ast_filter_t9]
+    if rep_filter_t9 != "전체": df_t9 = df_t9[df_t9['is_rep'] == rep_filter_t9]
+    if drv_filter_t9 != "전체": df_t9 = df_t9[df_t9['deriv'] == drv_filter_t9]
+    if trk_filter_t9 != "전체": df_t9 = df_t9[df_t9['tracking'] == trk_filter_t9]
+    if target_amcs_t9: df_t9 = df_t9[df_t9['amc'].isin(target_amcs_t9)]
+    
+    target_etfs_t9 = [code.replace('A', '') for code in df_t9['a_code'].unique()]
+    
+    st.divider()
+    
+    if st.button("📊 NAV 괴리 분석 데이터 불러오기", type="primary", key="btn_t9"):
+        if "KRX_API_KEY" not in st.secrets:
+            st.error("⚠️ `.streamlit/secrets.toml` 파일에 `KRX_API_KEY` 설정이 필요합니다.")
+        elif len(target_etfs_t9) == 0:
+            st.warning("선택하신 조건에 해당하는 종목이 없습니다. 필터를 변경해 주세요.")
+        else:
+            st.warning(f"⏳ **{target_snap_date} 기준 KRX 데이터를 조회 중입니다. (약 3초 소요)**")
+            
+            with st.spinner("KRX API에서 최신 NAV 및 종가 데이터를 수집 중입니다..."):
+                df_snap = get_krx_snapshot(target_snap_date)
+                
+                if df_snap.empty:
+                    st.error("해당 일자의 데이터를 가져오지 못했습니다. 장 휴장일이거나 유효하지 않은 날짜입니다.")
+                else:
+                    df_snap['ISU_CD'] = df_snap['ISU_CD'].astype(str)
+                    df_snap['short_code'] = df_snap['ISU_CD'].str.extract(r'(\d{6})')[0]
+                    
+                    nav_col = next((c for c in ['NAV', 'TDD_NAV', 'IDX_NAV'] if c in df_snap.columns), None)
+                    close_col = next((c for c in ['TDD_CLPR', 'CLPR', 'STCK_PRC'] if c in df_snap.columns), None)
+                    
+                    if not nav_col or not close_col:
+                        st.error(f"API 응답에서 NAV 또는 종가 컬럼을 찾을 수 없습니다. (발견된 컬럼: {list(df_snap.columns)})")
+                    else:
+                        res9 = pd.DataFrame()
+                        res9['단축코드'] = df_snap['short_code']
+                        res9['종목명'] = df_snap.get('ISU_NM', df_snap.get('ISU_ABBRV', ''))
+                        res9['NAV'] = pd.to_numeric(df_snap[nav_col].astype(str).str.replace(',', '', regex=False), errors='coerce').fillna(0)
+                        res9['종가'] = pd.to_numeric(df_snap[close_col].astype(str).str.replace(',', '', regex=False), errors='coerce').fillna(0)
+                        
+                        res9 = res9[res9['단축코드'].isin(target_etfs_t9)].drop_duplicates('단축코드').copy()
+                        
+                        if res9.empty:
+                            st.warning("조건에 매칭되는 종목 데이터가 없습니다.")
+                        else:
+                            res9['괴리금액(NAV-종가)'] = res9['NAV'] - res9['종가']
+                            res9['괴리율(%)'] = np.where(res9['NAV'] > 0, ((res9['NAV'] - res9['종가']) / res9['NAV']) * 100, 0)
+                            
+                            st.success(f"✅ 분석 완료! (기준일: {df_snap['query_date'].iloc[0]})")
+                            
+                            top_10 = res9.sort_values('괴리금액(NAV-종가)', ascending=False).head(10).reset_index(drop=True)
+                            bot_10 = res9.sort_values('괴리금액(NAV-종가)', ascending=True).head(10).reset_index(drop=True)
+                            
+                            col_l, col_r = st.columns(2)
+                            with col_l:
+                                st.write("### 📈 NAV - 종가 큰 종목 상위 10개 (고평가/괴리 확대)")
+                                st.dataframe(
+                                    top_10[['단축코드', '종목명', 'NAV', '종가', '괴리금액(NAV-종가)', '괴리율(%)']].style.format({
+                                        'NAV': '{:,.0f}원', '종가': '{:,.0f}원', 
+                                        '괴리금액(NAV-종가)': '{:+,.0f}원', '괴리율(%)': '{:+.2f}%'
+                                    }), use_container_width=True, hide_index=True
+                                )
+                                
+                            with col_r:
+                                st.write("### 📉 NAV - 종가 작은 종목 하위 10개 (저평가/마이너스 괴리)")
+                                st.dataframe(
+                                    bot_10[['단축코드', '종목명', 'NAV', '종가', '괴리금액(NAV-종가)', '괴리율(%)']].style.format({
+                                        'NAV': '{:,.0f}원', '종가': '{:,.0f}원', 
+                                        '괴리금액(NAV-종가)': '{:+,.0f}원', '괴리율(%)': '{:+.2f}%'
+                                    }), use_container_width=True, hide_index=True
+                                )
+                                
+                            st.divider()
+                            st.subheader("📋 필터링된 전체 종목 NAV 괴리 상세 목록")
+                            
+                            full_table = res9.sort_values('괴리금액(NAV-종가)', ascending=False).reset_index(drop=True)
+                            st.dataframe(
+                                full_table[['단축코드', '종목명', 'NAV', '종가', '괴리금액(NAV-종가)', '괴리율(%)']].style.format({
+                                    'NAV': '{:,.0f}원', '종가': '{:,.0f}원', 
+                                    '괴리금액(NAV-종가)': '{:+,.0f}원', '괴리율(%)': '{:+.2f}%'
+                                }), use_container_width=True, hide_index=True
+                            )
