@@ -37,7 +37,7 @@ def fetch_csvs_from_gmail():
         mail.login(gmail_user, gmail_pass)
         mail.select("inbox")
 
-        since_date = (datetime.datetime.now() - datetime.timedelta(days=3)).strftime("%d-%b-%Y")
+        since_date = (datetime.datetime.now() - datetime.timedelta(days=7)).strftime("%d-%b-%Y")
         search_query = f'(SUBJECT "[KRX]" SINCE "{since_date}")'
         status, messages = mail.search(None, search_query)
 
