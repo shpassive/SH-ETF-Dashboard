@@ -409,10 +409,11 @@ df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'
 # ----------------------------------------------------------------------
 # UI Tabs 구성 (9번 탭 추가)
 # ----------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "1. 종합 대시보드", "2. ETF 구분별 분석", "3. LP사 다각도 분석", 
     "4. ETF별 주력 LP 분석", "5. 운용사별 주력 ETF 분석",
-    "6. 종목 집중도 분석", "7. 시장 전체 거래대금 (KRX)", "8. 설정/환매 추이 (추정)", "9. NAV 괴리율 조회"
+    "6. 종목 집중도 분석", "7. 시장 전체 거래대금 (KRX)", "8. 설정/환매 추이 (추정)", "9. NAV 괴리율 조회",
+    "10. NotebookLM 기반 분석"
 ])
 
 # ==========================================
@@ -1214,3 +1215,61 @@ with tab9:
                                     '괴리금액(NAV-종가)': '{:+,.0f}원', '괴리율(%)': '{:+.2f}%'
                                 }), use_container_width=True, hide_index=True
                             )
+
+
+# ==========================================
+# Tab 10: 무료 LLM 데이터 분석 (NotebookLM)
+# ==========================================
+with tab10:
+    st.subheader("🤖 토큰 비용 0원! Google NotebookLM 기반 심층 분석")
+    st.write("유료 API 결제 없이 **Google NotebookLM**을 활용하여 대시보드 백단의 대용량 ETF 거래 데이터를 요약, 질의응답 및 심층 분석할 수 있습니다.")
+    
+    st.divider()
+    
+    col_llm1, col_llm2 = st.columns([1, 1])
+    
+    with col_llm1:
+        st.markdown("### 🔗 분석 환경 바로가기")
+        
+        # 유저가 제공한 NotebookLM 링크 및 원본 드라이브 파일 ID
+        notebooklm_url = "https://notebook.google.com/notebook/0f485a93-3b18-4e0a-947a-c33c0e96983f?authuser=4"
+        csv_file_id = "1kvm2KgIlGMTIN3IOpLOUwEirKWlid8aP" 
+        excel_file_id = "1xdKEXMRXf0TECNRvUedJ4jU9Pz29cRo4"
+        
+        drive_csv_url = f"https://drive.google.com/file/d/{csv_file_id}/view"
+        drive_excel_url = f"https://drive.google.com/file/d/{excel_file_id}/view"
+        
+        st.link_button("🚀 전용 NotebookLM 프로젝트 열기", notebooklm_url, type="primary", use_container_width=True)
+        st.write("▼ **소스 데이터 추가용 링크**")
+        st.link_button("📁 일별 거래대금 데이터 (CSV) 확인", drive_csv_url, use_container_width=True)
+        st.link_button("📊 ETF 마스터 DB (Excel) 확인", drive_excel_url, use_container_width=True)
+        
+        st.info("""
+        **💡 NotebookLM 데이터 연동 방법:**
+        1. 위의 **CSV / Excel 데이터** 링크를 눌러 구글 드라이브에서 원본 파일을 열고 다운로드합니다. (또는 내 드라이브에 바로가기를 추가합니다.)
+        2. **NotebookLM 프로젝트 열기** 버튼을 눌러 이동합니다.
+        3. NotebookLM 좌측의 `+ 소스 추가(Add source)` 버튼을 눌러 해당 파일들을 업로드하거나 드라이브에서 불러옵니다.
+        4. 데이터 업로드가 완료되면 우측 프롬프트 창을 통해 즉시 분석을 시작할 수 있습니다.
+        """)
+
+    with col_llm2:
+        st.markdown("### 📋 맞춤형 분석 프롬프트 생성기")
+        st.write("대시보드에서 설정한 현재 기간과 거래대금 규모를 반영한 프롬프트입니다. **복사해서 NotebookLM 채팅창에 붙여넣으세요.**")
+        
+        # 현재 필터링된 데이터의 주요 요약 텍스트 자동 생성
+        top_lps_str = ", ".join(df_filtered.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False).head(5).index.tolist())
+        tot_vol_billion = df_filtered['총LP거래대금'].sum() / 100_000_000
+        
+        llm_prompt_template = f"""[ETF LP 마켓 모니터링 데이터 기반 심층 분석 요청]
+
+기본 현황 (대시보드 기준):
+- 조회 기간: {start_date} ~ {end_date}
+- 총 LP 거래대금: {tot_vol_billion:,.0f} 억원
+- 주도 LP사 상위 5곳: {top_lps_str}
+
+추가된 소스 파일(CSV 및 Excel) 데이터를 바탕으로 다음 3가지를 분석해 줘:
+1. 위 조회 기간 동안 거래대금이 평소 대비 가장 크게 급증한 ETF 종목 상위 5개와 이를 주로 매매한 LP사는 어디인지 요약해 줘.
+2. 특정 운용사(AMC)별로 거래 상위 LP사의 점유율 쏠림 현상이 두드러지는 곳이 있는지 찾아줘.
+3. 데이터 전반을 볼 때, 시장 내 LP 거래 집중도 패턴에 구조적인 이상 징후나 특이 사항이 있다면 구체적인 종목명과 함께 설명해 줘."""
+
+        st.text_area("▼ 프롬프트 (클릭 후 Ctrl+C)", value=llm_prompt_template, height=350)
