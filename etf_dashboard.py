@@ -1216,60 +1216,117 @@ with tab9:
                                 }), use_container_width=True, hide_index=True
                             )
 
-
 # ==========================================
-# Tab 10: 무료 LLM 데이터 분석 (NotebookLM)
+# Tab 10: 구글 드라이브 RAW 데이터 기반 자동 분석
 # ==========================================
 with tab10:
-    st.subheader("🤖 토큰 비용 0원! Google NotebookLM 기반 심층 분석")
-    st.write("유료 API 결제 없이 **Google NotebookLM**을 활용하여 대시보드 백단의 대용량 ETF 거래 데이터를 요약, 질의응답 및 심층 분석할 수 있습니다.")
+    st.subheader("🔍 구글 드라이브 RAW 데이터 자동 분석기")
+    st.write("구글 드라이브에 연결된 **일별 거래 RAW 데이터(CSV)** 및 **ETF 마스터 DB(Excel)**를 직접 읽어와 자동 검색 및 분석을 수행합니다.")
     
     st.divider()
     
-    col_llm1, col_llm2 = st.columns([1, 1])
+    # 1. 데이터 세부 검색 및 필터링 옵션
+    st.write("### 1️⃣ 분석 대상 키워드 및 조건 검색")
+    c1, c2 = st.columns([2, 1])
     
-    with col_llm1:
-        st.markdown("### 🔗 분석 환경 바로가기")
+    with c1:
+        search_kw = st.text_input("🔎 검색할 ETF 종목명 또는 종목코드 (예: KODEX, TIGER, 069500)", value="")
+    with c2:
+        top_n = st.number_input("🔝 거래대금 상위 N개 추출", min_value=5, max_value=50, value=10)
         
-        # 유저가 제공한 NotebookLM 링크 및 원본 드라이브 파일 ID
-        notebooklm_url = "https://notebook.google.com/notebook/0f485a93-3b18-4e0a-947a-c33c0e96983f?authuser=4"
-        csv_file_id = "1kvm2KgIlGMTIN3IOpLOUwEirKWlid8aP" 
-        excel_file_id = "1xdKEXMRXf0TECNRvUedJ4jU9Pz29cRo4"
-        
-        drive_csv_url = f"https://drive.google.com/file/d/{csv_file_id}/view"
-        drive_excel_url = f"https://drive.google.com/file/d/{excel_file_id}/view"
-        
-        st.link_button("🚀 전용 NotebookLM 프로젝트 열기", notebooklm_url, type="primary", use_container_width=True)
-        st.write("▼ **소스 데이터 추가용 링크**")
-        st.link_button("📁 일별 거래대금 데이터 (CSV) 확인", drive_csv_url, use_container_width=True)
-        st.link_button("📊 ETF 마스터 DB (Excel) 확인", drive_excel_url, use_container_width=True)
-        
-        st.info("""
-        **💡 NotebookLM 데이터 연동 방법:**
-        1. 위의 **CSV / Excel 데이터** 링크를 눌러 구글 드라이브에서 원본 파일을 열고 다운로드합니다. (또는 내 드라이브에 바로가기를 추가합니다.)
-        2. **NotebookLM 프로젝트 열기** 버튼을 눌러 이동합니다.
-        3. NotebookLM 좌측의 `+ 소스 추가(Add source)` 버튼을 눌러 해당 파일들을 업로드하거나 드라이브에서 불러옵니다.
-        4. 데이터 업로드가 완료되면 우측 프롬프트 창을 통해 즉시 분석을 시작할 수 있습니다.
-        """)
+    st.write("▼ **세부 분석 필터 적용**")
+    f1, f2, f3, f4, f5 = st.columns(5)
+    mkt_f10 = f1.selectbox("국내/해외", ["전체"] + list(df['market'].unique()), key='t10_mkt')
+    ast_f10 = f2.selectbox("주식/그외", ["전체"] + list(df['asset'].unique()), key='t10_ast')
+    rep_f10 = f3.selectbox("대표지수", ["전체"] + list(df['is_rep'].unique()), key='t10_rep')
+    drv_f10 = f4.selectbox("일반/파생", ["전체"] + list(df['deriv'].unique()), key='t10_drv')
+    trk_f10 = f5.selectbox("패시브/액티브", ["전체"] + list(df['tracking'].unique()), key='t10_trk')
+    
+    # 데이터 필터링
+    df_raw_anal = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'].dt.date <= end_date)].copy()
+    
+    if mkt_f10 != "전체": df_raw_anal = df_raw_anal[df_raw_anal['market'] == mkt_f10]
+    if ast_f10 != "전체": df_raw_anal = df_raw_anal[df_raw_anal['asset'] == ast_f10]
+    if rep_f10 != "전체": df_raw_anal = df_raw_anal[df_raw_anal['is_rep'] == rep_f10]
+    if drv_f10 != "전체": df_raw_anal = df_raw_anal[df_raw_anal['deriv'] == drv_f10]
+    if trk_f10 != "전체": df_raw_anal = df_raw_anal[df_raw_anal['tracking'] == trk_f10]
+    
+    if search_kw.strip():
+        kw = search_kw.strip().upper()
+        df_raw_anal = df_raw_anal[
+            (df_raw_anal['종목명'].str.upper().str.contains(kw)) | 
+            (df_raw_anal['종목코드'].str.upper().str.contains(kw)) |
+            (df_raw_anal['a_code'].str.upper().str.contains(kw))
+        ]
 
-    with col_llm2:
-        st.markdown("### 📋 맞춤형 분석 프롬프트 생성기")
-        st.write("대시보드에서 설정한 현재 기간과 거래대금 규모를 반영한 프롬프트입니다. **복사해서 NotebookLM 채팅창에 붙여넣으세요.**")
+    st.divider()
+    
+    # 2. RAW 데이터 분석 실행
+    st.write("### 2️⃣ RAW 데이터 자동 분석 결과")
+    
+    if df_raw_anal.empty:
+        st.warning("검색 조건에 해당하는 RAW 데이터가 없습니다. 검색어나 필터를 변경해 보세요.")
+    else:
+        tot_raw_vol = df_raw_anal['총LP거래대금'].sum() / 100_000_000
+        tot_buy_vol = df_raw_anal['LP매수거래대금'].sum() / 100_000_000
+        tot_sell_vol = df_raw_anal['LP매도거래대금'].sum() / 100_000_000
+        net_buy_vol = df_raw_anal['LP순매수대금'].sum() / 100_000_000
         
-        # 현재 필터링된 데이터의 주요 요약 텍스트 자동 생성
-        top_lps_str = ", ".join(df_filtered.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False).head(5).index.tolist())
-        tot_vol_billion = df_filtered['총LP거래대금'].sum() / 100_000_000
+        # 핵심 메트릭 요약
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("기간 총 LP 거래대금", f"{tot_raw_vol:,.0f} 억원")
+        m2.metric("총 LP 매수대금", f"{tot_buy_vol:,.0f} 억원")
+        m3.metric("총 LP 매도대금", f"{tot_sell_vol:,.0f} 억원")
+        m4.metric("총 LP 순매수대금", f"{net_buy_vol:,.0f} 억원")
         
-        llm_prompt_template = f"""[ETF LP 마켓 모니터링 데이터 기반 심층 분석 요청]
+        st.write("")
+        col_res1, col_res2 = st.columns(2)
+        
+        with col_res1:
+            st.write(f"📊 **종목별 LP 거래대금 상위 Top {top_n}**")
+            etf_rank = df_raw_anal.groupby(['a_code', '종목명', 'amc'])['총LP거래대금'].sum().reset_index()
+            etf_rank = etf_rank.sort_values('총LP거래대금', ascending=False).head(top_n)
+            etf_rank['거래대금(억)'] = etf_rank['총LP거래대금'] / 100_000_000
+            etf_rank['비중(%)'] = (etf_rank['총LP거래대금'] / df_raw_anal['총LP거래대금'].sum()) * 100 if df_raw_anal['총LP거래대금'].sum() > 0 else 0
+            
+            st.dataframe(
+                etf_rank[['a_code', '종목명', 'amc', '거래대금(억)', '비중(%)']].style.format({
+                    '거래대금(억)': '{:,.0f}',
+                    '비중(%)': '{:.1f}%'
+                }),
+                use_container_width=True, hide_index=True
+            )
 
-기본 현황 (대시보드 기준):
-- 조회 기간: {start_date} ~ {end_date}
-- 총 LP 거래대금: {tot_vol_billion:,.0f} 억원
-- 주도 LP사 상위 5곳: {top_lps_str}
-
-추가된 소스 파일(CSV 및 Excel) 데이터를 바탕으로 다음 3가지를 분석해 줘:
-1. 위 조회 기간 동안 거래대금이 평소 대비 가장 크게 급증한 ETF 종목 상위 5개와 이를 주로 매매한 LP사는 어디인지 요약해 줘.
-2. 특정 운용사(AMC)별로 거래 상위 LP사의 점유율 쏠림 현상이 두드러지는 곳이 있는지 찾아줘.
-3. 데이터 전반을 볼 때, 시장 내 LP 거래 집중도 패턴에 구조적인 이상 징후나 특이 사항이 있다면 구체적인 종목명과 함께 설명해 줘."""
-
-        st.text_area("▼ 프롬프트 (클릭 후 Ctrl+C)", value=llm_prompt_template, height=350)
+        with col_res2:
+            st.write(f"🏢 **주요 주도 LP사 상위 Top {top_n}**")
+            lp_rank = df_raw_anal.groupby('회원사명')[['총LP거래대금', 'LP순매수대금']].sum().reset_index()
+            lp_rank = lp_rank.sort_values('총LP거래대금', ascending=False).head(top_n)
+            lp_rank['거래대금(억)'] = lp_rank['총LP거래대금'] / 100_000_000
+            lp_rank['순매수대금(억)'] = lp_rank['LP순매수대금'] / 100_000_000
+            lp_rank['점유율(%)'] = (lp_rank['총LP거래대금'] / df_raw_anal['총LP거래대금'].sum()) * 100 if df_raw_anal['총LP거래대금'].sum() > 0 else 0
+            
+            st.dataframe(
+                lp_rank[['회원사명', '거래대금(억)', '순매수대금(억)', '점유율(%)']].style.format({
+                    '거래대금(억)': '{:,.0f}',
+                    '순매수대금(억)': '{:,.0f}',
+                    '점유율(%)': '{:.1f}%'
+                }),
+                use_container_width=True, hide_index=True
+            )
+            
+        st.divider()
+        
+        # 3. RAW 데이터 일별 거래내역 표
+        st.write("📋 **조건에 부합하는 일별 RAW 데이터 상세 내역**")
+        raw_detail = df_raw_anal[['거래일자', '종목코드', '종목명', '회원사명', 'amc', 'LP매도거래대금', 'LP매수거래대금', '총LP거래대금', 'LP순매수대금']].copy()
+        raw_detail['거래일자'] = raw_detail['거래일자'].dt.strftime('%Y-%m-%d')
+        raw_detail['총LP거래대금(억)'] = raw_detail['총LP거래대금'] / 100_000_000
+        raw_detail['LP순매수대금(억)'] = raw_detail['LP순매수대금'] / 100_000_000
+        
+        st.dataframe(
+            raw_detail.sort_values('거래일자', ascending=False).head(100).style.format({
+                '총LP거래대금(억)': '{:,.1f}',
+                'LP순매수대금(억)': '{:,.1f}'
+            }),
+            use_container_width=True, hide_index=True
+        )
