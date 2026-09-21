@@ -430,6 +430,7 @@ with tab1:
         amc_list = sorted([a for a in df_filtered['amc'].unique() if a != '미분류'])
         top_amc = df_filtered[df_filtered['amc'] != '미분류'].groupby('amc')['총LP거래대금'].sum().idxmax() if not df_filtered.empty else None
         target_amcs = st.multiselect("비교 분석할 운용사 선택 (다중 선택 가능)", amc_list, default=[top_amc] if top_amc else None, key='t1_amc_sel')
+    
     st.divider()
     st.write("▼ ETF 섹터 세부 필터")
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -438,12 +439,14 @@ with tab1:
     rep_filter_t1 = c3.selectbox("대표지수", ["전체"] + list(df_filtered['is_rep'].unique()), key='t1_rep')
     drv_filter_t1 = c4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t1_drv')
     trk_filter_t1 = c5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t1_trk')
+    
     df_t1 = df_filtered.copy()
     if mkt_filter_t1 != "전체": df_t1 = df_t1[df_t1['market'] == mkt_filter_t1]
     if ast_filter_t1 != "전체": df_t1 = df_t1[df_t1['asset'] == ast_filter_t1]
     if rep_filter_t1 != "전체": df_t1 = df_t1[df_t1['is_rep'] == rep_filter_t1]
     if drv_filter_t1 != "전체": df_t1 = df_t1[df_t1['deriv'] == drv_filter_t1]
     if trk_filter_t1 != "전체": df_t1 = df_t1[df_t1['tracking'] == trk_filter_t1]
+    
     is_data_empty = False
     if trend_type == "특정 LP사 (Specific LP)":
         if target_lps: df_t1 = df_t1[df_t1['회원사명'].isin(target_lps)]
@@ -451,7 +454,9 @@ with tab1:
     elif trend_type == "특정 운용사 (Specific AMC)":
         if target_amcs: df_t1 = df_t1[df_t1['amc'].isin(target_amcs)]
         else: is_data_empty = True 
+        
     st.write("") 
+    
     if is_data_empty or df_t1.empty:
         st.warning("조회할 데이터가 없습니다. 상단에서 대상을 선택하거나 필터 조건을 변경해 주세요.")
     else:
@@ -460,17 +465,20 @@ with tab1:
         daily_avg = total_amt / unique_days if unique_days > 0 else 0
         active_etf_cnt = df_t1[df_t1['총LP거래대금'] > 0]['종목코드'].nunique()
         active_lp_cnt = df_t1[df_t1['총LP거래대금'] > 0]['회원사명'].nunique()
+        
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("기간 총 거래대금", f"{total_amt:,.0f} 억원")
         col2.metric("일평균 거래대금", f"{daily_avg:,.0f} 억원")
         col3.metric("유효 거래 종목 수", f"{active_etf_cnt:,} 개")
         col4.metric("활동 LP 회원사 수", f"{active_lp_cnt:,} 사")
+        
         st.divider()
         lp_total = df_t1.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False) / 100_000_000
         lp_total = lp_total[lp_total > 0]
         if not lp_total.empty:
             fig = px.bar(lp_total, x=lp_total.index, y=lp_total.values, title="선택된 조건 내 LP사별 총 거래대금 (억원)", labels={'y': '거래대금(억)', '회원사명': '증권사'}, color_discrete_sequence=['#4A90E2'])
             st.plotly_chart(fig, use_container_width=True)
+            
         st.divider()
         st.subheader("📉 시계열(Time-Series) 일별 거래대금 추이")
         if trend_type == "시장 전체 (Total Market)":
@@ -488,6 +496,30 @@ with tab1:
             daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
             fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='amc', title="선택 운용사별 일별 거래대금 추이", markers=True)
             st.plotly_chart(fig_t, use_container_width=True)
+
+        st.divider()
+        st.subheader("🏢 운용사별 LP사 시장 점유율 (M/S %) 매트릭스")
+        st.write("각 운용사(AMC)의 전체 거래대금 중 특정 LP사가 차지하는 비중(%)을 보여줍니다. (세로열 기준 합산 100%)")
+
+        amc_totals = df_t1.groupby('amc')['총LP거래대금'].sum().sort_values(ascending=False)
+        lp_totals = df_t1.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False)
+        
+        valid_amcs = amc_totals[amc_totals > 0].index.tolist()
+        valid_lps = lp_totals[lp_totals > 0].index.tolist()
+
+        if valid_amcs and valid_lps:
+            pivot_vol = df_t1.groupby(['회원사명', 'amc'])['총LP거래대금'].sum().unstack(fill_value=0)
+            pivot_ms = pivot_vol.div(pivot_vol.sum(axis=0), axis=1) * 100
+            pivot_ms = pivot_ms.reindex(index=valid_lps, columns=valid_amcs).fillna(0)
+            
+            st.dataframe(
+                pivot_ms.style.format("{:.1f}%").background_gradient(cmap='Blues', axis=0),
+                use_container_width=True
+            )
+        else:
+            st.warning("선택하신 필터 조건에 해당하는 점유율 데이터가 없습니다.")
+
+
 
 with tab2:
     st.subheader("📈 ETF 섹터 필터링을 통한 점유율 및 성향 분석")
