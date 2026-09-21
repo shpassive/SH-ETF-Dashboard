@@ -809,7 +809,7 @@ with tab6:
         records.append({'회원사명': lp, '총대금(억)': lp_tot / 100_000_000, '1위 종목명': t1_name, '1위 비중(%)': (t1_vol / lp_tot) * 100, '2위 종목명': t2_name, '2위 비중(%)': (t2_vol / lp_tot) * 100, '3위 종목명': t3_name, '3위 비중(%)': (t3_vol / lp_tot) * 100, 'Top 3 누적비중(%)': (top3_vol_sum / lp_tot) * 100, 'HHI 지수': hhi})
     
     conc_df = pd.DataFrame(records).sort_values('HHI 지수', ascending=False)
-    st.info("💡 **HHI (허핀달-허쉬만 지수)**: 포트폴리오 내 개별 종목 점유율의 제곱합 (0~10,000). 숫자가 클수록 소수 특정 종목에 거래가 기형적으로 집중되어 있음을 의미합니다.")
+    st.info("💡 **HHI (허핀달-허쉬만 지 지수)**: 포트폴리오 내 개별 종목 점유율의 제곱합 (0~10,000). 숫자가 클수록 소수 특정 종목에 거래가 기형적으로 집중되어 있음을 의미합니다.")
     st.dataframe(conc_df.style.format({'총대금(억)': '{:,.0f}', '1위 비중(%)': '{:.1f}%', '2위 비중(%)': '{:.1f}%', '3위 비중(%)': '{:.1f}%', 'Top 3 누적비중(%)': '{:.1f}%', 'HHI 지수': '{:,.0f}'}), use_container_width=True, hide_index=True)
 
     st.divider()
@@ -873,16 +873,15 @@ with tab6:
             
             st.success(f"📌 {len(target_lps_t6)}개 LP사의 Top 10 종목을 병합하여 총 **{len(pivot_t6)}개**의 고유 ETF가 도출되었습니다.")
             
-            # 순위를 보여주는 포맷 함수 (NaN인 경우 빈칸 '-' 출력)
+            # 순위를 보여주는 포맷 함수 (NaN인 경우 아예 빈 텍스트 출력)
             def format_rank(val):
-                if pd.isna(val): return "-"
+                if pd.isna(val): return ""
                 return f"{int(val)}위"
                 
-            # 결측치(NaN) 배경을 흰색으로 고정하는 함수
+            # 결측치(NaN) 배경과 글씨를 모두 흰색으로 고정하는 함수
             def highlight_nan(val):
                 if pd.isna(val):
-                    # 배경은 흰색, 글씨(dash)는 연한 회색으로 처리
-                    return 'background-color: white; color: #cccccc;'
+                    return 'background-color: white; color: white;'
                 return ''
             
             # 스타일 적용: Blues_r을 사용해 값이 작을수록(1위) 진하게 설정
@@ -890,7 +889,7 @@ with tab6:
                 .format(format_rank, subset=cols_ordered) \
                 .background_gradient(cmap='Blues_r', vmin=1, vmax=10, subset=cols_ordered)
             
-            # Pandas 버전에 따라 applymap 또는 map 호출하여 빈칸 흰색 칠하기 적용
+            # Pandas 버전에 따라 applymap 또는 map 호출하여 빈칸 숨기기 적용
             if hasattr(styled_pivot, "map"):
                 styled_pivot = styled_pivot.map(highlight_nan, subset=cols_ordered)
             else:
