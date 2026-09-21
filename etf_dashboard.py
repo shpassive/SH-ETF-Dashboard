@@ -853,25 +853,23 @@ with tab6:
             rank_df = pd.DataFrame(rank_records)
             
             # Pivot 생성 (행: 종목명, 열: 회원사명, 값: 순위)
-            # Top 10에 들지 못한 종목은 자연스럽게 NaN 값이 들어갑니다.
             pivot_t6 = rank_df.pivot(index='종목명', columns='회원사명', values='순위')
             
-            # 정렬을 위해 합집합 종목들의 총 거래대금 합계도 별도로 계산
+            # 정렬을 위해 합집합 종목들의 총 거래대금 합계 계산 (내부 정렬용)
             matrix_df = df_t6[
                 (df_t6['회원사명'].isin(target_lps_t6)) & 
                 (df_t6['종목명'].isin(top_etfs_union))
             ]
-            vol_sum = matrix_df.groupby('종목명')['총LP거래대금'].sum() / 100_000_000
+            vol_sum = matrix_df.groupby('종목명')['총LP거래대금'].sum()
             
-            # 선택한 LP사 순서대로 열 정렬 및 거래대금 컬럼 병합
+            # 선택한 LP사 순서대로 열 정렬
             cols_ordered = [lp for lp in target_lps_t6 if lp in pivot_t6.columns]
             pivot_t6 = pivot_t6[cols_ordered]
-            pivot_t6['선택 LP 합계(억)'] = vol_sum
             
-            # 거래대금 합계 기준으로 내림차순 정렬 후, 합계 컬럼을 맨 앞으로 이동
-            pivot_t6 = pivot_t6.sort_values('선택 LP 합계(억)', ascending=False)
-            final_cols = ['선택 LP 합계(억)'] + cols_ordered
-            pivot_t6 = pivot_t6[final_cols]
+            # 임시 컬럼을 추가해 전체 거래대금 기준으로 내림차순 정렬 후, 임시 컬럼 삭제
+            pivot_t6['sort_vol'] = vol_sum
+            pivot_t6 = pivot_t6.sort_values('sort_vol', ascending=False)
+            pivot_t6 = pivot_t6.drop(columns=['sort_vol'])
             
             st.success(f"📌 {len(target_lps_t6)}개 LP사의 Top 10 종목을 병합하여 총 **{len(pivot_t6)}개**의 고유 ETF가 도출되었습니다.")
             
@@ -879,12 +877,24 @@ with tab6:
             def format_rank(val):
                 if pd.isna(val): return "-"
                 return f"{int(val)}위"
+                
+            # 결측치(NaN) 배경을 흰색으로 고정하는 함수
+            def highlight_nan(val):
+                if pd.isna(val):
+                    # 배경은 흰색, 글씨(dash)는 연한 회색으로 처리
+                    return 'background-color: white; color: #cccccc;'
+                return ''
             
-            # 스타일 적용: Blues_r을 사용해 값이 작을수록(1위) 진하게 설정, 빈칸은 색칠 안 함
+            # 스타일 적용: Blues_r을 사용해 값이 작을수록(1위) 진하게 설정
             styled_pivot = pivot_t6.style \
-                .format("{:,.0f}", subset=['선택 LP 합계(억)']) \
                 .format(format_rank, subset=cols_ordered) \
                 .background_gradient(cmap='Blues_r', vmin=1, vmax=10, subset=cols_ordered)
+            
+            # Pandas 버전에 따라 applymap 또는 map 호출하여 빈칸 흰색 칠하기 적용
+            if hasattr(styled_pivot, "map"):
+                styled_pivot = styled_pivot.map(highlight_nan, subset=cols_ordered)
+            else:
+                styled_pivot = styled_pivot.applymap(highlight_nan, subset=cols_ordered)
                 
             st.dataframe(styled_pivot, use_container_width=True)
         else:
