@@ -768,8 +768,31 @@ with tab5:
 
 with tab6:
     st.subheader("🎯 종목 집중도 (HHI 및 Top-N 의존도)")
-    lp_vol = df_filtered.groupby('회원사명')['총LP거래대금'].sum()
-    lp_etf_vol = df_filtered.groupby(['회원사명', '종목명'])[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금']].sum().reset_index()
+    
+    # 1. 5가지 ETF 섹터 필터 추가
+    st.write("▼ **필터 조건 설정**")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    mkt_filter_t6 = c1.selectbox("국내/해외", ["전체"] + list(df_filtered['market'].unique()), key='t6_mkt')
+    ast_filter_t6 = c2.selectbox("주식/그외", ["전체"] + list(df_filtered['asset'].unique()), key='t6_ast')
+    rep_filter_t6 = c3.selectbox("대표지수", ["전체"] + list(df_filtered['is_rep'].unique()), key='t6_rep')
+    drv_filter_t6 = c4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t6_drv')
+    trk_filter_t6 = c5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t6_trk')
+    
+    # 필터 적용
+    df_t6 = df_filtered.copy()
+    if mkt_filter_t6 != "전체": df_t6 = df_t6[df_t6['market'] == mkt_filter_t6]
+    if ast_filter_t6 != "전체": df_t6 = df_t6[df_t6['asset'] == ast_filter_t6]
+    if rep_filter_t6 != "전체": df_t6 = df_t6[df_t6['is_rep'] == rep_filter_t6]
+    if drv_filter_t6 != "전체": df_t6 = df_t6[df_t6['deriv'] == drv_filter_t6]
+    if trk_filter_t6 != "전체": df_t6 = df_t6[df_t6['tracking'] == trk_filter_t6]
+
+    st.divider()
+
+    # 2. 필터 적용된 데이터로 기존 HHI 지수 계산
+    st.write("### 1️⃣ 필터 조건 적용 HHI 및 Top 3 종목 의존도")
+    lp_vol = df_t6.groupby('회원사명')['총LP거래대금'].sum()
+    lp_etf_vol = df_t6.groupby(['회원사명', '종목명'])[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금']].sum().reset_index()
+    
     records = []
     for lp, lp_tot in lp_vol.items():
         if lp_tot == 0: continue
@@ -784,9 +807,63 @@ with tab6:
         shares = (etfs['총LP거래대금'] / lp_tot) * 100
         hhi = (shares ** 2).sum()
         records.append({'회원사명': lp, '총대금(억)': lp_tot / 100_000_000, '1위 종목명': t1_name, '1위 비중(%)': (t1_vol / lp_tot) * 100, '2위 종목명': t2_name, '2위 비중(%)': (t2_vol / lp_tot) * 100, '3위 종목명': t3_name, '3위 비중(%)': (t3_vol / lp_tot) * 100, 'Top 3 누적비중(%)': (top3_vol_sum / lp_tot) * 100, 'HHI 지수': hhi})
+    
     conc_df = pd.DataFrame(records).sort_values('HHI 지수', ascending=False)
     st.info("💡 **HHI (허핀달-허쉬만 지수)**: 포트폴리오 내 개별 종목 점유율의 제곱합 (0~10,000). 숫자가 클수록 소수 특정 종목에 거래가 기형적으로 집중되어 있음을 의미합니다.")
     st.dataframe(conc_df.style.format({'총대금(억)': '{:,.0f}', '1위 비중(%)': '{:.1f}%', '2위 비중(%)': '{:.1f}%', '3위 비중(%)': '{:.1f}%', 'Top 3 누적비중(%)': '{:.1f}%', 'HHI 지수': '{:,.0f}'}), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # 3. 새로운 기능: LP사별 상위 10개 종목 합집합 매트릭스
+    st.write("### 2️⃣ LP사별 주력 종목 비교 매트릭스 (Top 10 합집합 기준)")
+    st.write("선택한 LP사들이 각각 가장 많이 거래한 상위 10개 종목들을 모두 모아(합집합), 각 LP사별 거래대금을 한눈에 비교합니다.")
+
+    # 거래대금이 존재하는 전체 LP사 목록 (거래대금 순)
+    all_active_lps = lp_vol.sort_values(ascending=False).index.tolist()
+    # 기본값으로 상위 5개 LP사 선택
+    default_lps = all_active_lps[:5] if len(all_active_lps) >= 5 else all_active_lps
+    
+    target_lps_t6 = st.multiselect("비교할 LP사 선택 (다중 선택)", all_active_lps, default=default_lps, key='t6_lp_sel')
+    
+    if target_lps_t6:
+        top_etfs_union = set()
+        
+        # 선택된 각 LP사별 상위 10개 종목 추출 후 합집합 구성
+        for lp in target_lps_t6:
+            lp_etfs = lp_etf_vol[lp_etf_vol['회원사명'] == lp].sort_values('총LP거래대금', ascending=False)
+            top10_names = lp_etfs.head(10)['종목명'].tolist()
+            top_etfs_union.update(top10_names)
+        
+        # 합집합에 해당하는 종목 & 선택된 LP사 데이터만 필터링
+        matrix_df = df_t6[
+            (df_t6['회원사명'].isin(target_lps_t6)) & 
+            (df_t6['종목명'].isin(top_etfs_union))
+        ]
+        
+        if not matrix_df.empty:
+            # Pivot 생성 (행: 종목명, 열: 회원사명, 값: 총LP거래대금)
+            pivot_t6 = matrix_df.groupby(['종목명', '회원사명'])['총LP거래대금'].sum().unstack(fill_value=0)
+            
+            # 단위를 '억원'으로 변환
+            pivot_t6 = pivot_t6 / 100_000_000
+            
+            # 선택한 LP사 순서대로 열(Column) 정렬
+            cols_ordered = [lp for lp in target_lps_t6 if lp in pivot_t6.columns]
+            pivot_t6 = pivot_t6[cols_ordered]
+            
+            # 각 행(종목)의 합계(선택한 LP사들 기준)를 구해 내림차순 정렬
+            pivot_t6['선택 LP 합계(억)'] = pivot_t6.sum(axis=1)
+            pivot_t6 = pivot_t6.sort_values('선택 LP 합계(억)', ascending=False)
+            
+            st.success(f"📌 선택된 {len(target_lps_t6)}개 LP사의 Top 10 종목을 병합한 결과, **총 {len(pivot_t6)}개의 고유 ETF**가 도출되었습니다.")
+            st.dataframe(
+                pivot_t6.style.format("{:,.0f}"), 
+                use_container_width=True
+            )
+        else:
+            st.warning("선택하신 조건 및 LP사에 해당하는 거래 내역이 없습니다.")
+    else:
+        st.info("비교 분석할 LP사를 최소 1개 이상 선택해 주세요.")
 
 with tab7:
     st.subheader("🇰🇷 KRX 공식 시장 거래대금 분석 (Open API 연동)")
@@ -838,7 +915,7 @@ with tab7:
                         st.dataframe(merged_df[['날짜', '시장거래대금(억)', 'LP거래대금(억)', 'LP관여율(%)']].style.format({'시장거래대금(억)': '{:,.0f}', 'LP거래대금(억)': '{:,.0f}', 'LP관여율(%)': '{:.2f}%'}), use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
-                    
+
 
 # ==========================================
 # Tab 8: 설정/환매 추이 추정
