@@ -820,11 +820,18 @@ with tab6:
 
     # 거래대금이 존재하는 전체 LP사 목록 (거래대금 순)
     all_active_lps = lp_vol.sort_values(ascending=False).index.tolist()
-    # 기본값으로 상위 5개 LP사 선택
-    default_lps = all_active_lps[:5] if len(all_active_lps) >= 5 else all_active_lps
     
-    target_lps_t6 = st.multiselect("비교할 LP사 선택 (다중 선택)", all_active_lps, default=default_lps, key='t6_lp_sel')
+    # 선택을 다 비우면 전체가 보이도록 기본값(default)을 전체 LP로 설정
+    selected_lps = st.multiselect(
+        "비교할 LP사 선택 (선택을 모두 지우면 전체 LP사가 자동 조회됩니다)", 
+        all_active_lps, 
+        default=all_active_lps, 
+        key='t6_lp_sel'
+    )
     
+    # 다 지워서 빈 리스트가 되면 전체 LP사로 취급
+    target_lps_t6 = selected_lps if selected_lps else all_active_lps
+        
     if target_lps_t6:
         top_etfs_union = set()
         
@@ -855,15 +862,15 @@ with tab6:
             pivot_t6['선택 LP 합계(억)'] = pivot_t6.sum(axis=1)
             pivot_t6 = pivot_t6.sort_values('선택 LP 합계(억)', ascending=False)
             
-            st.success(f"📌 선택된 {len(target_lps_t6)}개 LP사의 Top 10 종목을 병합한 결과, **총 {len(pivot_t6)}개의 고유 ETF**가 도출되었습니다.")
+            st.success(f"📌 {len(target_lps_t6)}개 LP사의 Top 10 종목을 병합하여 총 **{len(pivot_t6)}개**의 고유 ETF가 도출되었습니다.")
+            
+            # matplotlib 배경 그라데이션 적용 (각 열(LP사)을 기준으로 색상이 진해짐)
             st.dataframe(
-                pivot_t6.style.format("{:,.0f}"), 
+                pivot_t6.style.format("{:,.0f}").background_gradient(cmap='Blues', axis=0),
                 use_container_width=True
             )
         else:
             st.warning("선택하신 조건 및 LP사에 해당하는 거래 내역이 없습니다.")
-    else:
-        st.info("비교 분석할 LP사를 최소 1개 이상 선택해 주세요.")
 
 with tab7:
     st.subheader("🇰🇷 KRX 공식 시장 거래대금 분석 (Open API 연동)")
