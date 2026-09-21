@@ -110,7 +110,8 @@ def update_drive_csv(df, file_id):
 # ----------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data():
-    csv_file_id = "1aJ5x-GYsdZzNOwmsV0RBDObWxBV-8Hcb"
+    #csv_file_id = "1aJ5x-GYsdZzNOwmsV0RBDObWxBV-8Hcb"
+    csv_file_id = "1kvm2KgIlGMTIN3IOpLOUwEirKWlid8aP"
     excel_file_id = "1xdKEXMRXf0TECNRvUedJ4jU9Pz29cRo4"
 
     df_excel = None
