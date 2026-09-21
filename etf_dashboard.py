@@ -814,61 +814,79 @@ with tab6:
 
     st.divider()
 
-    # 3. 새로운 기능: LP사별 상위 10개 종목 합집합 매트릭스
+    # 3. 새로운 기능: LP사별 상위 10개 종목 합집합 매트릭스 (순위 기준)
     st.write("### 2️⃣ LP사별 주력 종목 비교 매트릭스 (Top 10 합집합 기준)")
-    st.write("선택한 LP사들이 각각 가장 많이 거래한 상위 10개 종목들을 모두 모아(합집합), 각 LP사별 거래대금을 한눈에 비교합니다.")
+    st.write("선택한 LP사들이 각각 가장 많이 거래한 상위 10개 종목들을 모아, 해당 종목이 각 LP사 내에서 **몇 위**인지 보여줍니다. (Top 10 밖인 경우 빈칸 처리됩니다.)")
 
     # 거래대금이 존재하는 전체 LP사 목록 (거래대금 순)
     all_active_lps = lp_vol.sort_values(ascending=False).index.tolist()
     
-    # 선택을 다 비우면 전체가 보이도록 기본값(default)을 전체 LP로 설정
+    # 다 지우면 전체가 보이도록 기본값(default)을 전체 LP로 설정
     selected_lps = st.multiselect(
-        "비교할 LP사 선택 (선택을 모두 지우면 전체 LP사가 자동 조회됩니다)", 
+        "비교할 LP사 선택 (선택을 지우면 전체가 조회됩니다)", 
         all_active_lps, 
         default=all_active_lps, 
         key='t6_lp_sel'
     )
     
-    # 다 지워서 빈 리스트가 되면 전체 LP사로 취급
     target_lps_t6 = selected_lps if selected_lps else all_active_lps
         
     if target_lps_t6:
+        rank_records = []
         top_etfs_union = set()
         
-        # 선택된 각 LP사별 상위 10개 종목 추출 후 합집합 구성
+        # 선택된 각 LP사별 상위 10개 종목 추출 및 순위 기록
         for lp in target_lps_t6:
             lp_etfs = lp_etf_vol[lp_etf_vol['회원사명'] == lp].sort_values('총LP거래대금', ascending=False)
-            top10_names = lp_etfs.head(10)['종목명'].tolist()
-            top_etfs_union.update(top10_names)
-        
-        # 합집합에 해당하는 종목 & 선택된 LP사 데이터만 필터링
-        matrix_df = df_t6[
-            (df_t6['회원사명'].isin(target_lps_t6)) & 
-            (df_t6['종목명'].isin(top_etfs_union))
-        ]
-        
-        if not matrix_df.empty:
-            # Pivot 생성 (행: 종목명, 열: 회원사명, 값: 총LP거래대금)
-            pivot_t6 = matrix_df.groupby(['종목명', '회원사명'])['총LP거래대금'].sum().unstack(fill_value=0)
+            top10 = lp_etfs.head(10).copy()
+            top10['순위'] = range(1, len(top10) + 1)
             
-            # 단위를 '억원'으로 변환
-            pivot_t6 = pivot_t6 / 100_000_000
+            for _, row in top10.iterrows():
+                rank_records.append({
+                    '종목명': row['종목명'],
+                    '회원사명': row['회원사명'],
+                    '순위': row['순위']
+                })
+                top_etfs_union.add(row['종목명'])
+        
+        if rank_records:
+            rank_df = pd.DataFrame(rank_records)
             
-            # 선택한 LP사 순서대로 열(Column) 정렬
+            # Pivot 생성 (행: 종목명, 열: 회원사명, 값: 순위)
+            # Top 10에 들지 못한 종목은 자연스럽게 NaN 값이 들어갑니다.
+            pivot_t6 = rank_df.pivot(index='종목명', columns='회원사명', values='순위')
+            
+            # 정렬을 위해 합집합 종목들의 총 거래대금 합계도 별도로 계산
+            matrix_df = df_t6[
+                (df_t6['회원사명'].isin(target_lps_t6)) & 
+                (df_t6['종목명'].isin(top_etfs_union))
+            ]
+            vol_sum = matrix_df.groupby('종목명')['총LP거래대금'].sum() / 100_000_000
+            
+            # 선택한 LP사 순서대로 열 정렬 및 거래대금 컬럼 병합
             cols_ordered = [lp for lp in target_lps_t6 if lp in pivot_t6.columns]
             pivot_t6 = pivot_t6[cols_ordered]
+            pivot_t6['선택 LP 합계(억)'] = vol_sum
             
-            # 각 행(종목)의 합계(선택한 LP사들 기준)를 구해 내림차순 정렬
-            pivot_t6['선택 LP 합계(억)'] = pivot_t6.sum(axis=1)
+            # 거래대금 합계 기준으로 내림차순 정렬 후, 합계 컬럼을 맨 앞으로 이동
             pivot_t6 = pivot_t6.sort_values('선택 LP 합계(억)', ascending=False)
+            final_cols = ['선택 LP 합계(억)'] + cols_ordered
+            pivot_t6 = pivot_t6[final_cols]
             
             st.success(f"📌 {len(target_lps_t6)}개 LP사의 Top 10 종목을 병합하여 총 **{len(pivot_t6)}개**의 고유 ETF가 도출되었습니다.")
             
-            # matplotlib 배경 그라데이션 적용 (각 열(LP사)을 기준으로 색상이 진해짐)
-            st.dataframe(
-                pivot_t6.style.format("{:,.0f}").background_gradient(cmap='Blues', axis=0),
-                use_container_width=True
-            )
+            # 순위를 보여주는 포맷 함수 (NaN인 경우 빈칸 '-' 출력)
+            def format_rank(val):
+                if pd.isna(val): return "-"
+                return f"{int(val)}위"
+            
+            # 스타일 적용: Blues_r을 사용해 값이 작을수록(1위) 진하게 설정, 빈칸은 색칠 안 함
+            styled_pivot = pivot_t6.style \
+                .format("{:,.0f}", subset=['선택 LP 합계(억)']) \
+                .format(format_rank, subset=cols_ordered) \
+                .background_gradient(cmap='Blues_r', vmin=1, vmax=10, subset=cols_ordered)
+                
+            st.dataframe(styled_pivot, use_container_width=True)
         else:
             st.warning("선택하신 조건 및 LP사에 해당하는 거래 내역이 없습니다.")
 
