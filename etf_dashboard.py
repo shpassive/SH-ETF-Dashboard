@@ -1238,35 +1238,38 @@ with tab9:
                                 }), use_container_width=True, hide_index=True
                             )
 
+
 # ==========================================
-# Tab 10: AI 데이터 분석 및 Hugging Face 연동
+# Tab 10: AI 데이터 분석 (완전 무료 버전)
 # ==========================================
 with tab10:
-    st.subheader("🤖 Hugging Face 연동 및 LLM AI 데이터 분석")
-    st.write("현재 메모리에 로드된 전체 데이터를 허깅페이스 Private Dataset에 백업하고, LLM을 통해 자연어로 분석을 요청할 수 있습니다.")
+    st.subheader("🤖 AI 데이터 분석 및 데이터 백업")
+    st.write("현재 메모리에 로드된 전체 데이터를 비공개 데이터셋에 백업하고, 완전 무료 오픈소스 AI를 통해 자연어로 분석을 요청할 수 있습니다.")
 
     c1, c2 = st.columns([1, 1])
     
     # -------------------------------------
-    # 좌측: 허깅페이스 데이터 업로드
+    # 좌측: 데이터셋 백업
     # -------------------------------------
     with c1:
-        st.write("### 1️⃣ 허깅페이스 데이터셋 백업")
-        hf_repo = st.text_input("Hugging Face 저장소 주소 (예: my-username/etf-private-data)", help="반드시 Private으로 생성한 Dataset 주소를 입력하세요.")
+        st.write("### 1️⃣ 데이터셋 백업")
+        hf_repo = st.text_input("데이터 저장소 ID (예: my-username/etf-private-data)", help="반드시 Private으로 생성한 Dataset ID를 입력하세요.")
         
-        if st.button("🚀 현재 데이터를 허깅페이스에 업로드", type="primary", key="btn_hf"):
+        if st.button("🚀 현재 데이터를 저장소에 업로드", type="primary", key="btn_hf"):
             if "HF_TOKEN" not in st.secrets:
                 st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
             elif not hf_repo:
-                st.warning("⚠️ 허깅페이스 Dataset 저장소 주소를 입력해 주세요.")
+                st.warning("⚠️ 저장소 ID를 입력해 주세요.")
             else:
-                with st.spinner("허깅페이스에 데이터를 안전하게 업로드 중입니다... (약 10~30초 소요)"):
+                with st.spinner("데이터를 안전하게 업로드 중입니다... (약 10~30초 소요)"):
                     try:
+                        from huggingface_hub import HfApi
+                        import io
+                        
                         api = HfApi(token=st.secrets["HF_TOKEN"])
                         
-                        # 1. 전체 데이터(CSV) 버퍼 생성 및 업로드
-                        csv_buffer = io.BytesIO()
                         # 순수 원본 컬럼만 필터링해서 올리기 (용량 최적화)
+                        csv_buffer = io.BytesIO()
                         original_cols = ['거래일자', '상품그룹ID', '종목코드', '종목명', '회원사명', 'LP매도거래량', 'LP매도거래대금', 'LP매수거래량', 'LP매수거래대금']
                         df_upload = df[[c for c in original_cols if c in df.columns]].copy()
                         df_upload['거래일자'] = df_upload['거래일자'].dt.strftime('%Y%m%d')
@@ -1285,53 +1288,83 @@ with tab10:
                         st.error(f"업로드 중 오류 발생: {e}")
 
     # -------------------------------------
-    # 우측: LLM (Gemini) 프롬프트 분석
+    # 우측: LLM AI 분석 (탭 10 자체 섹터 필터 적용)
     # -------------------------------------
     with c2:
-        st.write("### 2️⃣ AI 데이터 요약 및 인사이트 분석")
-        st.info("💡 사이드바의 **날짜 설정** 및 **Tab 1의 섹터 필터**가 적용된 현재 데이터셋을 기반으로 AI가 답변합니다.")
-        user_prompt = st.text_area("분석하고 싶은 내용을 자유롭게 적어주세요.", placeholder="예: 현재 필터링된 데이터에서 가장 순매수 금액이 큰 증권사의 특징과 주요 거래 종목을 요약해줘.")
+        st.write("### 2️⃣ AI 데이터 요약 및 인사이트 도출")
         
-        if st.button("✨ AI 분석 실행", type="primary", key="btn_llm"):
-            if "GEMINI_API_KEY" not in st.secrets:
-                st.error("⚠️ `.streamlit/secrets.toml`에 `GEMINI_API_KEY` 설정이 필요합니다.")
+        # 💡 10번 탭 전용 5가지 ETF 구분 드롭다운 필터
+        st.write("▼ **AI 분석 대상 섹터 필터 선택**")
+        f1, f2, f3, f4, f5 = st.columns(5)
+        mkt_filter_t10 = f1.selectbox("국내/해외", ["전체"] + list(df_filtered['market'].unique()), key='t10_mkt')
+        ast_filter_t10 = f2.selectbox("주식/그외", ["전체"] + list(df_filtered['asset'].unique()), key='t10_ast')
+        rep_filter_t10 = f3.selectbox("대표지수", ["전체"] + list(df_filtered['is_rep'].unique()), key='t10_rep')
+        drv_filter_t10 = f4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t10_drv')
+        trk_filter_t10 = f5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t10_trk')
+
+        # 필터링 적용
+        df_t10 = df_filtered.copy()
+        if mkt_filter_t10 != "전체": df_t10 = df_t10[df_t10['market'] == mkt_filter_t10]
+        if ast_filter_t10 != "전체": df_t10 = df_t10[df_t10['asset'] == ast_filter_t10]
+        if rep_filter_t10 != "전체": df_t10 = df_t10[df_t10['is_rep'] == rep_filter_t10]
+        if drv_filter_t10 != "전체": df_t10 = df_t10[df_t10['deriv'] == drv_filter_t10]
+        if trk_filter_t10 != "전체": df_t10 = df_t10[df_t10['tracking'] == trk_filter_t10]
+
+        st.info(f"💡 선택된 섹터 내 대상 종목 수: **{df_t10['종목코드'].nunique():,}개** | 지정된 날짜 및 위 필터 조건 기반으로 AI가 답변합니다.")
+        
+        user_prompt = st.text_area("분석하고 싶은 내용을 자유롭게 적어주세요.", placeholder="예: 선택한 섹터 데이터에서 가장 순매수 금액이 큰 증권사의 특징을 요약하고 퀀트 관점에서 의견을 말해줘.")
+        
+        if st.button("✨ 무료 AI 분석 실행", type="primary", key="btn_llm_free"):
+            if "HF_TOKEN" not in st.secrets:
+                st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
             elif not user_prompt.strip():
                 st.warning("⚠️ 질문 내용을 입력해 주세요.")
+            elif df_t10.empty:
+                st.warning("⚠️ 선택하신 필터 조건에 해당하는 거래 데이터가 없습니다. 필터를 변경해 주세요.")
             else:
-                with st.spinner("AI가 데이터를 분석하여 답변을 생성하고 있습니다..."):
+                with st.spinner("AI 모델이 데이터를 분석 중입니다... (최대 30초 소요)"):
                     try:
-                        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                        # 최신 Gemini 1.5 Flash 또는 Pro 모델 사용 (속도/가성비 좋음)
-                        model = genai.GenerativeModel('gemini-1.5-flash') 
+                        from huggingface_hub import InferenceClient
                         
-                        # 토큰 절약을 위해 필터링된 데이터의 '통계적 요약'과 '상위 그룹핑 결과'를 텍스트로 변환
-                        # 1. 일자별/증권사별 요약
-                        summary_lp = df_filtered.groupby('회원사명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
-                        summary_lp['총LP거래대금(억)'] = summary_lp['총LP거래대금'] / 100000000
-                        summary_lp['LP순매수대금(억)'] = summary_lp['LP순매수대금'] / 100000000
+                        client = InferenceClient(token=st.secrets["HF_TOKEN"])
                         
-                        # 2. 종목별 요약
-                        summary_etf = df_filtered.groupby('종목명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
-                        summary_etf['총LP거래대금(억)'] = summary_etf['총LP거래대금'] / 100000000
+                        # 한국어 성능이 매우 뛰어난 무료 오픈소스 모델 지정 (Qwen2.5 72B)
+                        model_id = "Qwen/Qwen2.5-72B-Instruct" 
                         
-                        context_prompt = f"""
-                        당신은 최고 수준의 퀀트 및 금융 데이터 분석가입니다.
-                        아래 제공된 [조회 기간 내 ETF 거래 요약 통계]를 바탕으로 사용자의 질문에 전문적이고 명확하게 한국어로 답변해 주세요.
-                        숫자는 가독성 있게 포맷팅하고, 금융 인프라 맥락에 맞는 인사이트를 도출해 주세요.
+                        # 10번 탭 필터링 데이터(df_t10) 기반 요약 통계 생성
+                        summary_lp = df_t10.groupby('회원사명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
+                        summary_lp['총대금(억)'] = summary_lp['총LP거래대금'] / 100_000_000
+                        summary_lp['순매수(억)'] = summary_lp['LP순매수대금'] / 100_000_000
+                        
+                        summary_etf = df_t10.groupby('종목명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
+                        summary_etf['총대금(억)'] = summary_etf['총LP거래대금'] / 100_000_000
+                        
+                        # 프롬프트 구성
+                        system_content = f"""당신은 논리적이고 뛰어난 퀀트 금융 데이터 분석가입니다.
+아래 제공된 [선택 섹터 거래 요약 통계]를 바탕으로 사용자의 질문에 한국어로 명확하게 답변하세요.
 
-                        [조회 기간 내 상위 10개 증권사(LP) 요약]
-                        {summary_lp[['총LP거래대금(억)', 'LP순매수대금(억)']].to_string()}
+[선택 섹터 상위 10개 증권사(LP) 거래대금 및 순매수 (단위: 억원)]
+{summary_lp[['총대금(억)', '순매수(억)']].to_string()}
 
-                        [조회 기간 내 상위 10개 ETF 종목 거래 요약]
-                        {summary_etf[['총LP거래대금(억)']].to_string()}
+[선택 섹터 상위 10개 ETF 거래대금 (단위: 억원)]
+{summary_etf[['총대금(억)']].to_string()}"""
 
-                        [사용자 질문]
-                        {user_prompt}
-                        """
+                        messages = [
+                            {"role": "system", "content": system_content},
+                            {"role": "user", "content": user_prompt}
+                        ]
                         
-                        response = model.generate_content(context_prompt)
+                        # 무료 API 호출
+                        response = client.chat_completion(
+                            model=model_id,
+                            messages=messages,
+                            max_tokens=1024
+                        )
+                        
                         st.markdown("---")
                         st.write("#### 🤖 AI 분석 결과")
-                        st.write(response.text)
+                        st.write(response.choices[0].message.content)
+                        
                     except Exception as e:
-                        st.error(f"AI 응답 생성 중 오류 발생: {e}")
+                        st.error(f"AI 무료 서버 호출 중 지연/오류가 발생했습니다: {e}")
+                        st.info("💡 팁: 서버 특성상 사용량이 순간적으로 몰릴 수 있습니다. 10~20초 후 다시 시도해보세요.")
