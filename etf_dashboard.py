@@ -1348,8 +1348,9 @@ with tab10:
                     
                     client = InferenceClient(token=st.secrets["HF_TOKEN"])
                     
-                    # 한국어 성능이 매우 뛰어난 7B 모델 사용
-                    model_id = "Qwen/Qwen2.5-7B-Instruct" 
+                    # 한국어 성능이 매우 뛰어난 72B 모델 사용
+                    # model_id = "Qwen/Qwen2.5-7B-Instruct" 
+                    model_id = "meta-llama/Llama-3.1-8B-Instruct"
                     
                     # LLM에게 전달할 통계 프롬프트 구성
                     summary_lp = df_t10.groupby('회원사명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
