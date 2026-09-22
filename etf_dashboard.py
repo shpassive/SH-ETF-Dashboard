@@ -84,8 +84,9 @@ def fetch_csvs_from_gmail():
         return pd.concat(fetched_dfs, ignore_index=True)
     return pd.DataFrame()
 
+
 # ----------------------------------------------------------------------
-# 2. 구글 드라이브 원본 CSV 업데이트(업로드) 함수
+# 2. 구글 드라이브 원본 CSV 업데이트(업로드) 함수 (수정본)
 # ----------------------------------------------------------------------
 def update_drive_csv(df, file_id):
     try:
@@ -98,13 +99,23 @@ def update_drive_csv(df, file_id):
         df_export = df.copy()
         df_export['거래일자'] = df_export['거래일자'].dt.strftime('%Y%m%d')
 
+        # 💡 원본 순수 CSV 컬럼 목록만 정의 (파생/계산 컬럼 제외)
+        original_cols = [
+            '거래일자', '상품그룹ID', '종목코드', '종목명', '회원사명', 
+            'LP매도거래량', 'LP매도거래대금', 'LP매수거래량', 'LP매수거래대금'
+        ]
+        
+        # 실제 존재하는 원본 컬럼만 필터링하여 저장
+        valid_cols = [col for col in original_cols if col in df_export.columns]
+        df_export = df_export[valid_cols]
+
         csv_buffer = io.BytesIO()
         df_export.to_csv(csv_buffer, index=False, encoding='cp949')
         csv_buffer.seek(0)
 
         media = MediaIoBaseUpload(csv_buffer, mimetype='text/csv', resumable=True)
         service.files().update(fileId=file_id, media_body=media).execute()
-        st.toast("✅ 구글 드라이브 원본 CSV가 성공적으로 업데이트되었습니다!", icon="💾")
+        st.toast("✅ 구글 드라이브 원본 CSV가 깔끔하게 업데이트되었습니다!", icon="💾")
         return True
     except Exception as e:
         st.error(f"구글 드라이브 업데이트 실패: {e}")
