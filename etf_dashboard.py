@@ -1245,55 +1245,37 @@ with tab9:
                                 }), use_container_width=True, hide_index=True
                             )
 
-
 # ==========================================
-# Tab 10: AI 데이터 분석 (완전 무료 버전)
+# Tab 10: AI 데이터 분석 (상하 배치 및 자율 코드 실행 버전)
 # ==========================================
 with tab10:
     st.subheader("🤖 AI 데이터 분석 및 데이터 백업")
     st.write("현재 메모리에 로드된 전체 데이터를 비공개 데이터셋에 백업하고, 완전 무료 오픈소스 AI를 통해 자연어로 분석을 요청할 수 있습니다.")
 
     # -------------------------------------
-    # 상단: 데이터셋 백업 (CSV + 마스터 엑셀 동시 업로드)
+    # 상단: 데이터셋 백업 (저장소 ID 고정)
     # -------------------------------------
     st.write("### 1️⃣ 데이터셋 백업 (거래내역 + 마스터 정보)")
-    hf_repo = "shpassive/etf-trade"  # 저장소 ID 고정
+    hf_repo = "shpassive/etf-trade"  # 👉 저장소 ID 고정
     
     if st.button("🚀 현재 데이터를 저장소에 일괄 업로드", type="primary", key="btn_hf"):
         if "HF_TOKEN" not in st.secrets:
             st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
         else:
-            with st.spinner("거래 데이터 및 마스터 정보를 업로드 중입니다..."):
+            with st.spinner("거래 데이터 및 마스터 정보를 안전하게 업로드 중입니다... (약 10~30초 소요)"):
                 try:
                     from huggingface_hub import HfApi
+                    import io
+                    
                     api = HfApi(token=st.secrets["HF_TOKEN"])
                     
-                    # 🔹 종목코드를 A###### 표준코드 형식으로 변환하는 함수
-                    def convert_to_a_code(code):
-                        if pd.isna(code):
-                            return code
-                        code_str = str(code).strip()
-                        # KR코드 형태인 경우 (예: KR7069500007 -> A069500)
-                        if code_str.startswith('KR') and len(code_str) >= 9:
-                            return f"A{code_str[3:9]}"
-                        # 6자리 숫자인 경우 (예: 069500 -> A069500)
-                        elif len(code_str) == 6 and code_str.isdigit():
-                            return f"A{code_str}"
-                        # 이미 A###### 형식인 경우 그대로 유지
-                        return code_str
-
-                    # 1. 거래 내역 데이터 (CSV) 업로드
+                    # 1. 거래 내역 CSV 업로드 (용량 최적화 및 날짜 포맷팅)
                     csv_buffer = io.BytesIO()
-                    # 💡 '상품그룹ID' 제거
-                    original_cols = ['거래일자', '종목코드', '종목명', '회원사명', 'LP매도거래량', 'LP매도거래대금', 'LP매수거래량', 'LP매수거래대금']
+                    original_cols = ['거래일자', '상품그룹ID', '종목코드', '종목명', '회원사명', 'LP매도거래량', 'LP매도거래대금', 'LP매수거래량', 'LP매수거래대금']
                     df_upload = df[[c for c in original_cols if c in df.columns]].copy()
                     
-                    # 'YYYY-MM-DD' 형태의 날짜 문자열로 변환
+                    # LLM이 날짜를 명확히 인식할 수 있도록 YYYY-MM-DD 형태로 변환
                     df_upload['거래일자'] = pd.to_datetime(df_upload['거래일자']).dt.strftime('%Y-%m-%d')
-                    
-                    # 💡 종목코드를 A###### 형식으로 변환
-                    if '종목코드' in df_upload.columns:
-                        df_upload['종목코드'] = df_upload['종목코드'].apply(convert_to_a_code)
                     
                     df_upload.to_csv(csv_buffer, index=False, encoding='cp949')
                     csv_buffer.seek(0)
@@ -1305,22 +1287,10 @@ with tab10:
                         repo_type="dataset"
                     )
                     
-                    # 2. 마스터 정보 (Excel) 업로드
+                    # 2. 마스터 엑셀(DB) 정보도 함께 업로드
                     try:
                         excel_buffer = io.BytesIO()
                         master_export_df = pd.DataFrame.from_dict(master_db, orient='index')
-                        
-                        # 💡 'category_key' 또는 'category key' 컬럼 제거
-                        drop_target_cols = [c for c in master_export_df.columns if c.lower().replace(" ", "_") == "category_key"]
-                        if drop_target_cols:
-                            master_export_df.drop(columns=drop_target_cols, inplace=True)
-                        
-                        # 💡 마스터 데이터의 종목코드도 A###### 형식으로 변환
-                        if '종목코드' in master_export_df.columns:
-                            master_export_df['종목코드'] = master_export_df['종목코드'].apply(convert_to_a_code)
-                        elif master_export_df.index.name == '종목코드' or isinstance(master_export_df.index[0], str):
-                            master_export_df.index = [convert_to_a_code(idx) for idx in master_export_df.index]
-                        
                         master_export_df.to_excel(excel_buffer, index=False)
                         excel_buffer.seek(0)
                         
@@ -1330,19 +1300,19 @@ with tab10:
                             repo_id=hf_repo,
                             repo_type="dataset"
                         )
-                    except Exception as master_err:
-                        st.warning(f"마스터 정보 업로드 중 주의: {master_err}")
+                    except Exception as e_excel:
+                        st.warning(f"마스터 엑셀 업로드 중 이슈 발생 (거래내역은 정상 업로드됨): {e_excel}")
 
-                    st.success("✅ 거래 내역(상품그룹ID 제외 및 A###### 코드 변환 적용) 및 마스터 정보(category_key 삭제 완료)가 업로드되었습니다!")
+                    st.success("✅ 거래 내역(날짜 형식 개선) 및 마스터 정보(Excel)가 모두 성공적으로 업로드되었습니다!")
                     st.balloons()
                 except Exception as e:
                     st.error(f"업로드 중 오류 발생: {e}")
                     st.info("💡 에러가 403 Forbidden 권한 관련이라면 허깅페이스 토큰의 권한(Write)을 다시 확인해주세요.")
-    
+
     st.divider()
 
     # -------------------------------------
-    # 하단: LLM AI 분석창 (전체 너비 사용)
+    # 하단: LLM AI 분석창 (자율 코드 생성 및 실행 파이프라인)
     # -------------------------------------
     st.write("### 2️⃣ AI 데이터 분석 및 인사이트 도출")
     
@@ -1364,56 +1334,143 @@ with tab10:
 
     st.info(f"💡 선택된 섹터 내 대상 종목 수: **{df_t10['종목코드'].nunique():,}개** | 아래 질문 창에 자연어로 물어보시면 데이터를 분석하여 답변합니다.")
     
-    user_prompt = st.text_area("분석하고 싶은 내용을 자유롭게 적어주세요.", placeholder="예: 선택한 섹터 데이터에서 가장 순매수 금액이 큰 증권사의 특징을 요약하고 퀀트 관점에서 의견을 말해줘.")
+    user_prompt = st.text_area(
+        "분석하고 싶은 내용을 상세히 적어주세요.", 
+        placeholder="예: 메리츠증권, 미래에셋증권, 키움증권이 2026년 9월 들어서 평소보다 거래대금이 늘어난 ETF 종목을 계산해줘."
+    )
     
-    if st.button("✨ AI 분석 실행", type="primary", key="btn_llm_free"):
+    if st.button("✨ 퀀트 AI 분석 실행", type="primary", key="btn_llm_free"):
         if "HF_TOKEN" not in st.secrets:
             st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
         elif not user_prompt.strip():
             st.warning("⚠️ 질문 내용을 입력해 주세요.")
         elif df_t10.empty:
-            st.warning("⚠️ 선택하신 필터 조건에 해당하는 거래 데이터가 없습니다. 필터를 변경해 주세요.")
+            st.warning("⚠️ 선택하신 필터 조건에 해당하는 거래 데이터가 없습니다.")
         else:
-            with st.spinner("AI가 데이터를 분석하며 보고서를 작성 중입니다... (최대 20~30초 소요)"):
+            with st.spinner("AI가 질문을 해석하여 파이썬 코드를 작성하고 계산 중입니다... (약 20~40초 소요)"):
                 try:
-                    from huggingface_hub import InferenceClient
-                    
-                    client = InferenceClient(token=st.secrets["HF_TOKEN"])
-                    
+                    import requests
+                    import io
+                    import contextlib
+                    import traceback
+
+                    api_token = st.secrets["HF_TOKEN"]
+                    api_url = "https://router.huggingface.co/v1/chat/completions"
+                    headers = {
+                        "Authorization": f"Bearer {api_token}",
+                        "Content-Type": "application/json"
+                    }
+
+                    # 모델 설정 (Llama 3.1 8B Instruct 사용)
                     model_id = "meta-llama/Llama-3.1-8B-Instruct"
-                    
-                    # LLM에게 전달할 통계 프롬프트 구성
-                    summary_lp = df_t10.groupby('회원사명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
-                    summary_lp['총대금(억)'] = summary_lp['총LP거래대금'] / 100_000_000
-                    summary_lp['순매수(억)'] = summary_lp['LP순매수대금'] / 100_000_000
-                    
-                    summary_etf = df_t10.groupby('종목명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
-                    summary_etf['총대금(억)'] = summary_etf['총LP거래대금'] / 100_000_000
-                    
-                    system_content = f"""당신은 논리적이고 뛰어난 퀀트 금융 데이터 분석가입니다.
-아래 제공된 [선택 섹터 거래 요약 통계]를 바탕으로 사용자의 질문에 한국어로 명확하게 답변하세요.
 
-[선택 섹터 상위 10개 증권사(LP) 거래대금 및 순매수 (단위: 억원)]
-{summary_lp[['총대금(억)', '순매수(억)']].to_string()}
+                    # ----------------------------------------------------
+                    # Step 1. 질문을 해결하기 위한 Python 코드 생성 요청
+                    # ----------------------------------------------------
+                    df_info = f"""
+데이터프레임 변수명: `df_t10`
+컬럼 목록 및 타입:
+{df_t10.dtypes.to_string()}
 
-[선택 섹터 상위 10개 ETF 거래대금 (단위: 억원)]
-{summary_etf[['총대금(억)']].to_string()}"""
+주요 컬럼 설명:
+- 거래일자 (datetime64): 날짜
+- 종목명 (str): ETF 상품명
+- 회원사명 (str): 증권사/LP명
+- 총LP거래대금 (float): 총 거래대금(원)
+- LP순매수대금 (float): 순매수대금(원)
+- amc (str): 운용사명
+"""
 
-                    messages = [
-                        {"role": "system", "content": system_content},
-                        {"role": "user", "content": user_prompt}
-                    ]
+                    code_prompt = f"""당신은 파이썬 데이터 분석(Pandas) 전문가입니다.
+제공된 데이터프레임 `df_t10`을 활용하여 아래 사용자의 질문을 해결하는 정확한 Python 코드를 작성하세요.
+
+{df_info}
+
+[작성 규칙]
+1. 오직 실행 가능한 Python 코드만 출력하세요. 설명은 필요 없습니다.
+2. 코드는 반드시 ```python 으로 시작하고 ``` 로 끝나야 합니다.
+3. 분석된 결과(데이터프레임 또는 문자열)는 반드시 `print()` 함수를 사용해 출력되게 하세요.
+4. 출력할 때 단위가 크다면 '억원' 단위로 변환해서 출력하세요.
+5. 임의로 가상의 종목 데이터를 생성하지 말고, 무조건 `df_t10` 내의 데이터만 연산하세요.
+
+사용자 질문: {user_prompt}
+"""
+
+                    payload_code = {
+                        "model": model_id,
+                        "messages": [{"role": "user", "content": code_prompt}],
+                        "max_tokens": 800
+                    }
+
+                    res_code = requests.post(api_url, headers=headers, json=payload_code, timeout=40)
                     
-                    response = client.chat_completion(
-                        model=model_id,
-                        messages=messages,
-                        max_tokens=1024
-                    )
-                    
-                    st.markdown("---")
-                    st.write("#### 🤖 AI 분석 리포트")
-                    st.write(response.choices[0].message.content)
-                    
+                    if res_code.status_code != 200:
+                        st.error(f"코드 생성 API 요청 실패: {res_code.text}")
+                    else:
+                        raw_code_ans = res_code.json()['choices'][0]['message']['content']
+                        
+                        # 코드 블록 추출 (정규식 또는 문자열 파싱)
+                        if "```python" in raw_code_ans:
+                            py_code = raw_code_ans.split("```python")[1].split("```")[0].strip()
+                        elif "```" in raw_code_ans:
+                            py_code = raw_code_ans.split("```")[1].split("```")[0].strip()
+                        else:
+                            py_code = raw_code_ans.strip()
+
+                        # ----------------------------------------------------
+                        # Step 2. 생성된 파이썬 코드 실행 및 결과 캡처
+                        # ----------------------------------------------------
+                        stdout_buffer = io.StringIO()
+                        exec_env = {"df_t10": df_t10, "pd": pd, "np": np}
+                        
+                        try:
+                            with contextlib.redirect_stdout(stdout_buffer):
+                                exec(py_code, exec_env)
+                            calc_result = stdout_buffer.getvalue().strip()
+                            if not calc_result:
+                                calc_result = "코드 실행은 성공했으나 출력(print)된 결과가 없습니다."
+                        except Exception as e:
+                            error_msg = traceback.format_exc()
+                            calc_result = f"데이터 연산 중 에러가 발생했습니다:\n{error_msg}"
+
+                        # ----------------------------------------------------
+                        # Step 3. 실제 계산 결과를 바탕으로 최종 리포트 작성
+                        # ----------------------------------------------------
+                        report_prompt = f"""당신은 논리적이고 객관적인 퀀트 금융 분석가입니다.
+사용자의 질문과, 시스템이 실제 데이터를 바탕으로 파이썬 코드를 실행하여 얻은 [계산 결과]를 확인하고 깔끔한 한국어 보고서를 작성하세요.
+
+사용자 질문: {user_prompt}
+
+[실제 데이터 연산 결과]
+{calc_result}
+
+[답변 작성 주의사항]
+1. 위 [실제 데이터 연산 결과]에 나타난 수치와 종목명만 사용해서 답변하세요.
+2. 결과에 없는 종목(삼성전자, SK하이닉스 등)을 절대 지어내거나 추측해서 답변하지 마세요.
+3. 결과에 에러가 발생했다면, "요청하신 분석 조건을 계산하는 과정에서 데이터 구조상 오류가 발생했습니다."라고 정중히 안내하세요.
+"""
+
+                        payload_report = {
+                            "model": model_id,
+                            "messages": [{"role": "user", "content": report_prompt}],
+                            "max_tokens": 1024
+                        }
+
+                        res_report = requests.post(api_url, headers=headers, json=payload_report, timeout=40)
+                        
+                        if res_report.status_code == 200:
+                            final_report = res_report.json()['choices'][0]['message']['content']
+                            
+                            st.markdown("---")
+                            st.write("#### 🤖 AI 퀀트 데이터 분석 리포트 (실제 데이터 계산 기반)")
+                            st.write(final_report)
+                            
+                            with st.expander("🔍 AI가 생성하여 실행한 파이썬 코드 및 추출 데이터 원본 보기"):
+                                st.code(py_code, language="python")
+                                st.text("[실제 시스템 계산 결과]")
+                                st.text(calc_result)
+                        else:
+                            st.error(f"최종 보고서 생성 실패: {res_report.text}")
+
                 except Exception as e:
-                    st.error(f"AI 호출 중 오류가 발생했습니다: {e}")
-                    st.info("💡 에러 메세지에 '403 Forbidden'이 포함되어 있다면, 허깅페이스 토큰 발급 시 'Make calls to the serverless Inference API' 체크를 잊지 않으셨는지 확인해주세요!")
+                    st.error(f"AI 분석 파이프라인 작동 중 시스템 오류가 발생했습니다: {e}")
