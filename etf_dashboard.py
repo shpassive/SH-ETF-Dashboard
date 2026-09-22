@@ -430,12 +430,12 @@ df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'
 
 
 # ----------------------------------------------------------------------
-# UI Tabs 구성 (9번 탭 추가)
+# UI Tabs 구성
 # ----------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-    "1. 종합 대시보드", "2. ETF 구분별 분석", "3. LP사 다각도 분석", 
-    "4. ETF별 주력 LP 분석", "5. 운용사별 주력 ETF 분석",
-    "6. 종목 집중도 분석", "7. 시장 전체 거래대금 (KRX)", "8. 설정/환매 추이 (추정)", "9. NAV 괴리율 조회"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+    "1. 종합 대시보드", "2. ETF 구분별 분석", "3. LP별 분석", 
+    "4. ETF별 분석", "5. 운용사별 분석",
+    "6. 종목 집중도 분석", "7. 시장 전체 거래대금", "8. 설정/환매 추이(추정)", "9. NAV 괴리율 조회", "10. AI 데이터 분석"
 ])
 
 # ==========================================
@@ -1237,3 +1237,101 @@ with tab9:
                                     '괴리금액(NAV-종가)': '{:+,.0f}원', '괴리율(%)': '{:+.2f}%'
                                 }), use_container_width=True, hide_index=True
                             )
+
+# ==========================================
+# Tab 10: AI 데이터 분석 및 Hugging Face 연동
+# ==========================================
+with tab10:
+    st.subheader("🤖 Hugging Face 연동 및 LLM AI 데이터 분석")
+    st.write("현재 메모리에 로드된 전체 데이터를 허깅페이스 Private Dataset에 백업하고, LLM을 통해 자연어로 분석을 요청할 수 있습니다.")
+
+    c1, c2 = st.columns([1, 1])
+    
+    # -------------------------------------
+    # 좌측: 허깅페이스 데이터 업로드
+    # -------------------------------------
+    with c1:
+        st.write("### 1️⃣ 허깅페이스 데이터셋 백업")
+        hf_repo = st.text_input("Hugging Face 저장소 주소 (예: my-username/etf-private-data)", help="반드시 Private으로 생성한 Dataset 주소를 입력하세요.")
+        
+        if st.button("🚀 현재 데이터를 허깅페이스에 업로드", type="primary", key="btn_hf"):
+            if "HF_TOKEN" not in st.secrets:
+                st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
+            elif not hf_repo:
+                st.warning("⚠️ 허깅페이스 Dataset 저장소 주소를 입력해 주세요.")
+            else:
+                with st.spinner("허깅페이스에 데이터를 안전하게 업로드 중입니다... (약 10~30초 소요)"):
+                    try:
+                        api = HfApi(token=st.secrets["HF_TOKEN"])
+                        
+                        # 1. 전체 데이터(CSV) 버퍼 생성 및 업로드
+                        csv_buffer = io.BytesIO()
+                        # 순수 원본 컬럼만 필터링해서 올리기 (용량 최적화)
+                        original_cols = ['거래일자', '상품그룹ID', '종목코드', '종목명', '회원사명', 'LP매도거래량', 'LP매도거래대금', 'LP매수거래량', 'LP매수거래대금']
+                        df_upload = df[[c for c in original_cols if c in df.columns]].copy()
+                        df_upload['거래일자'] = df_upload['거래일자'].dt.strftime('%Y%m%d')
+                        df_upload.to_csv(csv_buffer, index=False, encoding='cp949')
+                        csv_buffer.seek(0)
+                        
+                        api.upload_file(
+                            path_or_fileobj=csv_buffer,
+                            path_in_repo="etf_integrated_data.csv",
+                            repo_id=hf_repo,
+                            repo_type="dataset"
+                        )
+                        st.success("✅ 전체 거래내역 CSV 파일이 성공적으로 업로드되었습니다!")
+                        st.balloons()
+                    except Exception as e:
+                        st.error(f"업로드 중 오류 발생: {e}")
+
+    # -------------------------------------
+    # 우측: LLM (Gemini) 프롬프트 분석
+    # -------------------------------------
+    with c2:
+        st.write("### 2️⃣ AI 데이터 요약 및 인사이트 분석")
+        st.info("💡 사이드바의 **날짜 설정** 및 **Tab 1의 섹터 필터**가 적용된 현재 데이터셋을 기반으로 AI가 답변합니다.")
+        user_prompt = st.text_area("분석하고 싶은 내용을 자유롭게 적어주세요.", placeholder="예: 현재 필터링된 데이터에서 가장 순매수 금액이 큰 증권사의 특징과 주요 거래 종목을 요약해줘.")
+        
+        if st.button("✨ AI 분석 실행", type="primary", key="btn_llm"):
+            if "GEMINI_API_KEY" not in st.secrets:
+                st.error("⚠️ `.streamlit/secrets.toml`에 `GEMINI_API_KEY` 설정이 필요합니다.")
+            elif not user_prompt.strip():
+                st.warning("⚠️ 질문 내용을 입력해 주세요.")
+            else:
+                with st.spinner("AI가 데이터를 분석하여 답변을 생성하고 있습니다..."):
+                    try:
+                        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+                        # 최신 Gemini 1.5 Flash 또는 Pro 모델 사용 (속도/가성비 좋음)
+                        model = genai.GenerativeModel('gemini-1.5-flash') 
+                        
+                        # 토큰 절약을 위해 필터링된 데이터의 '통계적 요약'과 '상위 그룹핑 결과'를 텍스트로 변환
+                        # 1. 일자별/증권사별 요약
+                        summary_lp = df_filtered.groupby('회원사명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
+                        summary_lp['총LP거래대금(억)'] = summary_lp['총LP거래대금'] / 100000000
+                        summary_lp['LP순매수대금(억)'] = summary_lp['LP순매수대금'] / 100000000
+                        
+                        # 2. 종목별 요약
+                        summary_etf = df_filtered.groupby('종목명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
+                        summary_etf['총LP거래대금(억)'] = summary_etf['총LP거래대금'] / 100000000
+                        
+                        context_prompt = f"""
+                        당신은 최고 수준의 퀀트 및 금융 데이터 분석가입니다.
+                        아래 제공된 [조회 기간 내 ETF 거래 요약 통계]를 바탕으로 사용자의 질문에 전문적이고 명확하게 한국어로 답변해 주세요.
+                        숫자는 가독성 있게 포맷팅하고, 금융 인프라 맥락에 맞는 인사이트를 도출해 주세요.
+
+                        [조회 기간 내 상위 10개 증권사(LP) 요약]
+                        {summary_lp[['총LP거래대금(억)', 'LP순매수대금(억)']].to_string()}
+
+                        [조회 기간 내 상위 10개 ETF 종목 거래 요약]
+                        {summary_etf[['총LP거래대금(억)']].to_string()}
+
+                        [사용자 질문]
+                        {user_prompt}
+                        """
+                        
+                        response = model.generate_content(context_prompt)
+                        st.markdown("---")
+                        st.write("#### 🤖 AI 분석 결과")
+                        st.write(response.text)
+                    except Exception as e:
+                        st.error(f"AI 응답 생성 중 오류 발생: {e}")
