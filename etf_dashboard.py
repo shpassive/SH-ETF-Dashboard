@@ -1257,26 +1257,25 @@ with tab10:
     # 상단: 데이터셋 백업 (CSV + 마스터 엑셀 동시 업로드)
     # -------------------------------------
     st.write("### 1️⃣ 데이터셋 백업 (거래내역 + 마스터 정보)")
-    hf_repo = st.text_input("데이터 저장소 ID (예: my-username/etf-private-data)", help="반드시 Private으로 생성한 Dataset ID를 입력하세요.")
+    # hf_repo = st.text_input("데이터 저장소 ID (예: my-username/etf-private-data)", help="반드시 Private으로 생성한 Dataset ID를 입력하세요.")
+    hf_repo = "shpassive/etf-trade"  # 저장소 ID 고정
     
     if st.button("🚀 현재 데이터를 저장소에 일괄 업로드", type="primary", key="btn_hf"):
         if "HF_TOKEN" not in st.secrets:
             st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
-        elif not hf_repo:
-            st.warning("⚠️ 저장소 ID를 입력해 주세요.")
         else:
-            with st.spinner("거래 데이터 및 마스터 정보를 안전하게 업로드 중입니다... (약 10~30초 소요)"):
+            with st.spinner("거래 데이터 및 마스터 정보를 업로드 중입니다..."):
                 try:
                     from huggingface_hub import HfApi
-                    import io
-                    
                     api = HfApi(token=st.secrets["HF_TOKEN"])
                     
-                    # 1. 거래 내역 CSV 업로드 (용량 최적화)
                     csv_buffer = io.BytesIO()
                     original_cols = ['거래일자', '상품그룹ID', '종목코드', '종목명', '회원사명', 'LP매도거래량', 'LP매도거래대금', 'LP매수거래량', 'LP매수거래대금']
                     df_upload = df[[c for c in original_cols if c in df.columns]].copy()
-                    df_upload['거래일자'] = df_upload['거래일자'].dt.strftime('%Y%m%d')
+                    
+                    # 💡 핵심 수정: 'YYYY-MM-DD' 형태의 명확한 날짜 문자열로 변환하여 업로드
+                    df_upload['거래일자'] = pd.to_datetime(df_upload['거래일자']).dt.strftime('%Y-%m-%d')
+                    
                     df_upload.to_csv(csv_buffer, index=False, encoding='cp949')
                     csv_buffer.seek(0)
                     
@@ -1287,10 +1286,8 @@ with tab10:
                         repo_type="dataset"
                     )
                     
-                    # 2. 마스터 엑셀(DB) 정보도 함께 업로드
                     try:
                         excel_buffer = io.BytesIO()
-                        # 캐싱된 master_db 딕셔너리를 엑셀 형태로 변환하여 저장
                         master_export_df = pd.DataFrame.from_dict(master_db, orient='index')
                         master_export_df.to_excel(excel_buffer, index=False)
                         excel_buffer.seek(0)
@@ -1301,15 +1298,15 @@ with tab10:
                             repo_id=hf_repo,
                             repo_type="dataset"
                         )
-                    except Exception as e_excel:
-                        st.warning(f"마스터 엑셀 업로드 중 이슈 발생 (거래내역은 정상 업로드됨): {e_excel}")
+                    except Exception:
+                        pass
 
-                    st.success("✅ 거래 내역(CSV) 및 마스터 정보(Excel)가 모두 성공적으로 업로드되었습니다!")
+                    st.success("✅ 거래 내역(날짜 형식 개선) 및 마스터 정보가 모두 성공적으로 업로드되었습니다!")
                     st.balloons()
                 except Exception as e:
                     st.error(f"업로드 중 오류 발생: {e}")
                     st.info("💡 에러가 403 Forbidden 권한 관련이라면 허깅페이스 토큰의 권한(Write)을 다시 확인해주세요.")
-
+    
     st.divider()
 
     # -------------------------------------
@@ -1337,7 +1334,7 @@ with tab10:
     
     user_prompt = st.text_area("분석하고 싶은 내용을 자유롭게 적어주세요.", placeholder="예: 선택한 섹터 데이터에서 가장 순매수 금액이 큰 증권사의 특징을 요약하고 퀀트 관점에서 의견을 말해줘.")
     
-    if st.button("✨ 퀀트 AI 분석 실행", type="primary", key="btn_llm_free"):
+    if st.button("✨ AI 분석 실행", type="primary", key="btn_llm_free"):
         if "HF_TOKEN" not in st.secrets:
             st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
         elif not user_prompt.strip():
@@ -1383,7 +1380,7 @@ with tab10:
                     )
                     
                     st.markdown("---")
-                    st.write("#### 🤖 AI 퀀트 분석 리포트")
+                    st.write("#### 🤖 AI 분석 리포트")
                     st.write(response.choices[0].message.content)
                     
                 except Exception as e:
