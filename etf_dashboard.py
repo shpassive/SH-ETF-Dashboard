@@ -21,6 +21,10 @@ from datetime import timedelta
 st.set_page_config(page_title="ETF Market Monitoring (v9.0)", layout="wide")
 st.title("📊 ETF Market Monitoring Dashboard (통합판)")
 
+# 전역 변수 설정
+CSV_FILE_ID = "1kvm2KgIlGMTIN3IOpLOUwEirKWlid8aP"
+EXCEL_FILE_ID = "1xdKEXMRXf0TECNRvUedJ4jU9Pz29cRo4"
+
 # ----------------------------------------------------------------------
 # 1. 지메일(Gmail) 첨부파일 자동 수신 및 CSV 추출 함수
 # ----------------------------------------------------------------------
@@ -100,20 +104,17 @@ def update_drive_csv(df, file_id):
 
         media = MediaIoBaseUpload(csv_buffer, mimetype='text/csv', resumable=True)
         service.files().update(fileId=file_id, media_body=media).execute()
-        st.toast("✅ 신규 데이터를 구글 드라이브 원본 파일에 성공적으로 업데이트했습니다!", icon="💾")
-        
+        st.toast("✅ 구글 드라이브 원본 CSV가 성공적으로 업데이트되었습니다!", icon="💾")
+        return True
     except Exception as e:
         st.error(f"구글 드라이브 업데이트 실패: {e}")
+        return False
 
 # ----------------------------------------------------------------------
-# 3. 메인 데이터 로드 및 전처리
+# 3. 메인 데이터 로드 및 전처리 (지메일 수신 자동 포함)
 # ----------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data():
-    #csv_file_id = "1aJ5x-GYsdZzNOwmsV0RBDObWxBV-8Hcb"
-    csv_file_id = "1kvm2KgIlGMTIN3IOpLOUwEirKWlid8aP"
-    excel_file_id = "1xdKEXMRXf0TECNRvUedJ4jU9Pz29cRo4"
-
     df_excel = None
     df_base = None
 
@@ -126,14 +127,14 @@ def load_data():
             service = build('drive', 'v3', credentials=credentials)
 
             try:
-                request = service.files().export_media(fileId=excel_file_id, mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                request = service.files().export_media(fileId=EXCEL_FILE_ID, mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
                 excel_bytes = io.BytesIO(request.execute())
             except:
-                request = service.files().get_media(fileId=excel_file_id)
+                request = service.files().get_media(fileId=EXCEL_FILE_ID)
                 excel_bytes = io.BytesIO(request.execute())
             df_excel = pd.read_excel(excel_bytes)
 
-            request_csv = service.files().get_media(fileId=csv_file_id)
+            request_csv = service.files().get_media(fileId=CSV_FILE_ID)
             csv_bytes = io.BytesIO(request_csv.execute())
             df_base = pd.read_csv(csv_bytes, encoding='cp949', thousands=',')
         except Exception as e:
@@ -141,14 +142,14 @@ def load_data():
 
     if df_excel is None:
         try:
-            excel_url = f"https://docs.google.com/spreadsheets/d/{excel_file_id}/export?format=xlsx"
+            excel_url = f"https://docs.google.com/spreadsheets/d/{EXCEL_FILE_ID}/export?format=xlsx"
             df_excel = pd.read_excel(excel_url)
         except:
-            excel_url = f"https://drive.google.com/uc?export=download&id={excel_file_id}"
+            excel_url = f"https://drive.google.com/uc?export=download&id={EXCEL_FILE_ID}"
             df_excel = pd.read_excel(excel_url)
 
     if df_base is None:
-        csv_url = f"https://drive.google.com/uc?export=download&id={csv_file_id}"
+        csv_url = f"https://drive.google.com/uc?export=download&id={CSV_FILE_ID}"
         df_base = pd.read_csv(csv_url, encoding='cp949', thousands=',')
 
     base_row_count = len(df_base)
@@ -183,6 +184,7 @@ def load_data():
             'is_rep': is_rep, 'deriv': deriv, 'tracking': tracking, 'category_key': cat_key, 'amc': amc
         }
 
+    # 지메일 백그라운드 자동 수신
     try:
         df_gmail = fetch_csvs_from_gmail()
     except:
@@ -207,9 +209,8 @@ def load_data():
 
     df = df.drop_duplicates(subset=['거래일자', '종목코드', '회원사명'], keep='last').reset_index(drop=True)
 
-    if len(df) > base_row_count:
-        if "gcp_service_account" in st.secrets:
-            update_drive_csv(df, csv_file_id)
+    # 💡 자동 업데이트 로직(update_drive_csv) 제거됨 (버튼으로 분리)
+    has_new_data = len(df) > base_row_count
 
     df['LP매도거래대금'] = df['LP매도거래대금'].fillna(0)
     df['LP매수거래대금'] = df['LP매수거래대금'].fillna(0)
@@ -230,9 +231,9 @@ def load_data():
     for cat in categories:
         df[cat] = df['종목코드'].map(master_df[cat]).fillna('미분류')
 
-    return df, master_db
+    return df, master_db, has_new_data
 
-df, master_db = load_data()
+df, master_db, has_new_data = load_data()
 if df.empty:
     st.error("⚠️ 데이터 로드에 실패하였거나 표시할 ETF 데이터가 없습니다.")
     st.stop()
@@ -283,7 +284,6 @@ def get_krx_open_api_market_data(tickers, start_date, end_date):
     else:
         return pd.DataFrame()
 
-
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_krx_snapshot(target_date):
     api_key = st.secrets.get("KRX_API_KEY")
@@ -312,7 +312,6 @@ def get_krx_snapshot(target_date):
         time.sleep(0.1)
         
     return pd.DataFrame()
-
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_krx_daily_nav_shares(ticker, start_date, end_date):
@@ -365,8 +364,21 @@ def get_krx_daily_nav_shares(ticker, start_date, end_date):
 
 
 # ----------------------------------------------------------------------
-# 사이드바 (Global Date Filter)
+# 사이드바 (업데이트 버튼 및 Date Filter)
 # ----------------------------------------------------------------------
+st.sidebar.header("⚙️ 데이터 관리")
+if has_new_data:
+    st.sidebar.info("💡 **새로운 메일 데이터가 병합되었습니다.** 드라이브에 원본을 저장하시겠습니까?")
+if st.sidebar.button("💾 구글 드라이브 원본 덮어쓰기", type="primary"):
+    with st.spinner("병합된 최신 데이터를 구글 드라이브에 저장 중입니다..."):
+        if update_drive_csv(df, CSV_FILE_ID):
+            st.cache_data.clear()  # 기존 캐시 메모리 초기화
+            st.sidebar.success("저장 완료! 화면을 새로고침합니다.")
+            time.sleep(1)          # 성공 메시지를 사용자가 읽을 수 있도록 1초 대기
+            st.rerun()             # 화면 즉시 새로고침 (새로운 데이터 상태 반영)
+
+st.sidebar.divider()
+
 st.sidebar.header("🗓️ 데이터 날짜 설정")
 
 min_val = df['거래일자'].min()
