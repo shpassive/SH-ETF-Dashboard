@@ -1257,7 +1257,6 @@ with tab10:
     # 상단: 데이터셋 백업 (CSV + 마스터 엑셀 동시 업로드)
     # -------------------------------------
     st.write("### 1️⃣ 데이터셋 백업 (거래내역 + 마스터 정보)")
-    # hf_repo = st.text_input("데이터 저장소 ID (예: my-username/etf-private-data)", help="반드시 Private으로 생성한 Dataset ID를 입력하세요.")
     hf_repo = "shpassive/etf-trade"  # 저장소 ID 고정
     
     if st.button("🚀 현재 데이터를 저장소에 일괄 업로드", type="primary", key="btn_hf"):
@@ -1269,12 +1268,32 @@ with tab10:
                     from huggingface_hub import HfApi
                     api = HfApi(token=st.secrets["HF_TOKEN"])
                     
+                    # 🔹 종목코드를 A###### 표준코드 형식으로 변환하는 함수
+                    def convert_to_a_code(code):
+                        if pd.isna(code):
+                            return code
+                        code_str = str(code).strip()
+                        # KR코드 형태인 경우 (예: KR7069500007 -> A069500)
+                        if code_str.startswith('KR') and len(code_str) >= 9:
+                            return f"A{code_str[3:9]}"
+                        # 6자리 숫자인 경우 (예: 069500 -> A069500)
+                        elif len(code_str) == 6 and code_str.isdigit():
+                            return f"A{code_str}"
+                        # 이미 A###### 형식인 경우 그대로 유지
+                        return code_str
+
+                    # 1. 거래 내역 데이터 (CSV) 업로드
                     csv_buffer = io.BytesIO()
-                    original_cols = ['거래일자', '상품그룹ID', '종목코드', '종목명', '회원사명', 'LP매도거래량', 'LP매도거래대금', 'LP매수거래량', 'LP매수거래대금']
+                    # 💡 '상품그룹ID' 제거
+                    original_cols = ['거래일자', '종목코드', '종목명', '회원사명', 'LP매도거래량', 'LP매도거래대금', 'LP매수거래량', 'LP매수거래대금']
                     df_upload = df[[c for c in original_cols if c in df.columns]].copy()
                     
-                    # 💡 핵심 수정: 'YYYY-MM-DD' 형태의 명확한 날짜 문자열로 변환하여 업로드
+                    # 'YYYY-MM-DD' 형태의 날짜 문자열로 변환
                     df_upload['거래일자'] = pd.to_datetime(df_upload['거래일자']).dt.strftime('%Y-%m-%d')
+                    
+                    # 💡 종목코드를 A###### 형식으로 변환
+                    if '종목코드' in df_upload.columns:
+                        df_upload['종목코드'] = df_upload['종목코드'].apply(convert_to_a_code)
                     
                     df_upload.to_csv(csv_buffer, index=False, encoding='cp949')
                     csv_buffer.seek(0)
@@ -1286,9 +1305,22 @@ with tab10:
                         repo_type="dataset"
                     )
                     
+                    # 2. 마스터 정보 (Excel) 업로드
                     try:
                         excel_buffer = io.BytesIO()
                         master_export_df = pd.DataFrame.from_dict(master_db, orient='index')
+                        
+                        # 💡 'category_key' 또는 'category key' 컬럼 제거
+                        drop_target_cols = [c for c in master_export_df.columns if c.lower().replace(" ", "_") == "category_key"]
+                        if drop_target_cols:
+                            master_export_df.drop(columns=drop_target_cols, inplace=True)
+                        
+                        # 💡 마스터 데이터의 종목코드도 A###### 형식으로 변환
+                        if '종목코드' in master_export_df.columns:
+                            master_export_df['종목코드'] = master_export_df['종목코드'].apply(convert_to_a_code)
+                        elif master_export_df.index.name == '종목코드' or isinstance(master_export_df.index[0], str):
+                            master_export_df.index = [convert_to_a_code(idx) for idx in master_export_df.index]
+                        
                         master_export_df.to_excel(excel_buffer, index=False)
                         excel_buffer.seek(0)
                         
@@ -1298,10 +1330,10 @@ with tab10:
                             repo_id=hf_repo,
                             repo_type="dataset"
                         )
-                    except Exception:
-                        pass
+                    except Exception as master_err:
+                        st.warning(f"마스터 정보 업로드 중 주의: {master_err}")
 
-                    st.success("✅ 거래 내역(날짜 형식 개선) 및 마스터 정보가 모두 성공적으로 업로드되었습니다!")
+                    st.success("✅ 거래 내역(상품그룹ID 제외 및 A###### 코드 변환 적용) 및 마스터 정보(category_key 삭제 완료)가 업로드되었습니다!")
                     st.balloons()
                 except Exception as e:
                     st.error(f"업로드 중 오류 발생: {e}")
@@ -1348,8 +1380,6 @@ with tab10:
                     
                     client = InferenceClient(token=st.secrets["HF_TOKEN"])
                     
-                    # 한국어 성능이 매우 뛰어난 72B 모델 사용
-                    # model_id = "Qwen/Qwen2.5-7B-Instruct" 
                     model_id = "meta-llama/Llama-3.1-8B-Instruct"
                     
                     # LLM에게 전달할 통계 프롬프트 구성
