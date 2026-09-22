@@ -1253,101 +1253,116 @@ with tab10:
     st.subheader("🤖 AI 데이터 분석 및 데이터 백업")
     st.write("현재 메모리에 로드된 전체 데이터를 비공개 데이터셋에 백업하고, 완전 무료 오픈소스 AI를 통해 자연어로 분석을 요청할 수 있습니다.")
 
-    c1, c2 = st.columns([1, 1])
+    # -------------------------------------
+    # 상단: 데이터셋 백업 (CSV + 마스터 엑셀 동시 업로드)
+    # -------------------------------------
+    st.write("### 1️⃣ 데이터셋 백업 (거래내역 + 마스터 정보)")
+    hf_repo = st.text_input("데이터 저장소 ID (예: my-username/etf-private-data)", help="반드시 Private으로 생성한 Dataset ID를 입력하세요.")
     
-    # -------------------------------------
-    # 좌측: 데이터셋 백업
-    # -------------------------------------
-    with c1:
-        st.write("### 1️⃣ 데이터셋 백업")
-        hf_repo = st.text_input("데이터 저장소 ID (예: my-username/etf-private-data)", help="반드시 Private으로 생성한 Dataset ID를 입력하세요.")
-        
-        if st.button("🚀 현재 데이터를 저장소에 업로드", type="primary", key="btn_hf"):
-            if "HF_TOKEN" not in st.secrets:
-                st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
-            elif not hf_repo:
-                st.warning("⚠️ 저장소 ID를 입력해 주세요.")
-            else:
-                with st.spinner("데이터를 안전하게 업로드 중입니다... (약 10~30초 소요)"):
+    if st.button("🚀 현재 데이터를 저장소에 일괄 업로드", type="primary", key="btn_hf"):
+        if "HF_TOKEN" not in st.secrets:
+            st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
+        elif not hf_repo:
+            st.warning("⚠️ 저장소 ID를 입력해 주세요.")
+        else:
+            with st.spinner("거래 데이터 및 마스터 정보를 안전하게 업로드 중입니다... (약 10~30초 소요)"):
+                try:
+                    from huggingface_hub import HfApi
+                    import io
+                    
+                    api = HfApi(token=st.secrets["HF_TOKEN"])
+                    
+                    # 1. 거래 내역 CSV 업로드 (용량 최적화)
+                    csv_buffer = io.BytesIO()
+                    original_cols = ['거래일자', '상품그룹ID', '종목코드', '종목명', '회원사명', 'LP매도거래량', 'LP매도거래대금', 'LP매수거래량', 'LP매수거래대금']
+                    df_upload = df[[c for c in original_cols if c in df.columns]].copy()
+                    df_upload['거래일자'] = df_upload['거래일자'].dt.strftime('%Y%m%d')
+                    df_upload.to_csv(csv_buffer, index=False, encoding='cp949')
+                    csv_buffer.seek(0)
+                    
+                    api.upload_file(
+                        path_or_fileobj=csv_buffer,
+                        path_in_repo="etf_integrated_data.csv",
+                        repo_id=hf_repo,
+                        repo_type="dataset"
+                    )
+                    
+                    # 2. 마스터 엑셀(DB) 정보도 함께 업로드
                     try:
-                        from huggingface_hub import HfApi
-                        import io
-                        
-                        api = HfApi(token=st.secrets["HF_TOKEN"])
-                        
-                        # 순수 원본 컬럼만 필터링해서 올리기 (용량 최적화)
-                        csv_buffer = io.BytesIO()
-                        original_cols = ['거래일자', '상품그룹ID', '종목코드', '종목명', '회원사명', 'LP매도거래량', 'LP매도거래대금', 'LP매수거래량', 'LP매수거래대금']
-                        df_upload = df[[c for c in original_cols if c in df.columns]].copy()
-                        df_upload['거래일자'] = df_upload['거래일자'].dt.strftime('%Y%m%d')
-                        df_upload.to_csv(csv_buffer, index=False, encoding='cp949')
-                        csv_buffer.seek(0)
+                        excel_buffer = io.BytesIO()
+                        # 캐싱된 master_db 딕셔너리를 엑셀 형태로 변환하여 저장
+                        master_export_df = pd.DataFrame.from_dict(master_db, orient='index')
+                        master_export_df.to_excel(excel_buffer, index=False)
+                        excel_buffer.seek(0)
                         
                         api.upload_file(
-                            path_or_fileobj=csv_buffer,
-                            path_in_repo="etf_integrated_data.csv",
+                            path_or_fileobj=excel_buffer,
+                            path_in_repo="etf_master_info.xlsx",
                             repo_id=hf_repo,
                             repo_type="dataset"
                         )
-                        st.success("✅ 전체 거래내역 CSV 파일이 성공적으로 업로드되었습니다!")
-                        st.balloons()
-                    except Exception as e:
-                        st.error(f"업로드 중 오류 발생: {e}")
+                    except Exception as e_excel:
+                        st.warning(f"마스터 엑셀 업로드 중 이슈 발생 (거래내역은 정상 업로드됨): {e_excel}")
+
+                    st.success("✅ 거래 내역(CSV) 및 마스터 정보(Excel)가 모두 성공적으로 업로드되었습니다!")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"업로드 중 오류 발생: {e}")
+                    st.info("💡 에러가 403 Forbidden 권한 관련이라면 허깅페이스 토큰의 권한(Write)을 다시 확인해주세요.")
+
+    st.divider()
 
     # -------------------------------------
-    # 우측: LLM AI 분석 (탭 10 자체 섹터 필터 적용)
+    # 하단: LLM AI 분석창 (전체 너비 사용)
     # -------------------------------------
-    with c2:
-        st.write("### 2️⃣ AI 데이터 요약 및 인사이트 도출")
-        
-        # 💡 10번 탭 전용 5가지 ETF 구분 드롭다운 필터
-        st.write("▼ **AI 분석 대상 섹터 필터 선택**")
-        f1, f2, f3, f4, f5 = st.columns(5)
-        mkt_filter_t10 = f1.selectbox("국내/해외", ["전체"] + list(df_filtered['market'].unique()), key='t10_mkt')
-        ast_filter_t10 = f2.selectbox("주식/그외", ["전체"] + list(df_filtered['asset'].unique()), key='t10_ast')
-        rep_filter_t10 = f3.selectbox("대표지수", ["전체"] + list(df_filtered['is_rep'].unique()), key='t10_rep')
-        drv_filter_t10 = f4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t10_drv')
-        trk_filter_t10 = f5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t10_trk')
+    st.write("### 2️⃣ AI 데이터 분석 및 인사이트 도출")
+    
+    st.write("▼ **AI 분석 대상 섹터 필터 선택**")
+    f1, f2, f3, f4, f5 = st.columns(5)
+    mkt_filter_t10 = f1.selectbox("국내/해외", ["전체"] + list(df_filtered['market'].unique()), key='t10_mkt')
+    ast_filter_t10 = f2.selectbox("주식/그외", ["전체"] + list(df_filtered['asset'].unique()), key='t10_ast')
+    rep_filter_t10 = f3.selectbox("대표지수", ["전체"] + list(df_filtered['is_rep'].unique()), key='t10_rep')
+    drv_filter_t10 = f4.selectbox("일반/파생", ["전체"] + list(df_filtered['deriv'].unique()), key='t10_drv')
+    trk_filter_t10 = f5.selectbox("패시브/액티브", ["전체"] + list(df_filtered['tracking'].unique()), key='t10_trk')
 
-        # 필터링 적용
-        df_t10 = df_filtered.copy()
-        if mkt_filter_t10 != "전체": df_t10 = df_t10[df_t10['market'] == mkt_filter_t10]
-        if ast_filter_t10 != "전체": df_t10 = df_t10[df_t10['asset'] == ast_filter_t10]
-        if rep_filter_t10 != "전체": df_t10 = df_t10[df_t10['is_rep'] == rep_filter_t10]
-        if drv_filter_t10 != "전체": df_t10 = df_t10[df_t10['deriv'] == drv_filter_t10]
-        if trk_filter_t10 != "전체": df_t10 = df_t10[df_t10['tracking'] == trk_filter_t10]
+    # 필터링 적용
+    df_t10 = df_filtered.copy()
+    if mkt_filter_t10 != "전체": df_t10 = df_t10[df_t10['market'] == mkt_filter_t10]
+    if ast_filter_t10 != "전체": df_t10 = df_t10[df_t10['asset'] == ast_filter_t10]
+    if rep_filter_t10 != "전체": df_t10 = df_t10[df_t10['is_rep'] == rep_filter_t10]
+    if drv_filter_t10 != "전체": df_t10 = df_t10[df_t10['deriv'] == drv_filter_t10]
+    if trk_filter_t10 != "전체": df_t10 = df_t10[df_t10['tracking'] == trk_filter_t10]
 
-        st.info(f"💡 선택된 섹터 내 대상 종목 수: **{df_t10['종목코드'].nunique():,}개** | 지정된 날짜 및 위 필터 조건 기반으로 AI가 답변합니다.")
-        
-        user_prompt = st.text_area("분석하고 싶은 내용을 자유롭게 적어주세요.", placeholder="예: 선택한 섹터 데이터에서 가장 순매수 금액이 큰 증권사의 특징을 요약하고 퀀트 관점에서 의견을 말해줘.")
-        
-        if st.button("✨ 무료 AI 분석 실행", type="primary", key="btn_llm_free"):
-            if "HF_TOKEN" not in st.secrets:
-                st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
-            elif not user_prompt.strip():
-                st.warning("⚠️ 질문 내용을 입력해 주세요.")
-            elif df_t10.empty:
-                st.warning("⚠️ 선택하신 필터 조건에 해당하는 거래 데이터가 없습니다. 필터를 변경해 주세요.")
-            else:
-                with st.spinner("AI 모델이 데이터를 분석 중입니다... (최대 30초 소요)"):
-                    try:
-                        from huggingface_hub import InferenceClient
-                        
-                        client = InferenceClient(token=st.secrets["HF_TOKEN"])
-                        
-                        # 한국어 성능이 매우 뛰어난 무료 오픈소스 모델 지정 (Qwen2.5 72B)
-                        model_id = "Qwen/Qwen2.5-72B-Instruct" 
-                        
-                        # 10번 탭 필터링 데이터(df_t10) 기반 요약 통계 생성
-                        summary_lp = df_t10.groupby('회원사명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
-                        summary_lp['총대금(억)'] = summary_lp['총LP거래대금'] / 100_000_000
-                        summary_lp['순매수(억)'] = summary_lp['LP순매수대금'] / 100_000_000
-                        
-                        summary_etf = df_t10.groupby('종목명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
-                        summary_etf['총대금(억)'] = summary_etf['총LP거래대금'] / 100_000_000
-                        
-                        # 프롬프트 구성
-                        system_content = f"""당신은 논리적이고 뛰어난 퀀트 금융 데이터 분석가입니다.
+    st.info(f"💡 선택된 섹터 내 대상 종목 수: **{df_t10['종목코드'].nunique():,}개** | 아래 질문 창에 자연어로 물어보시면 데이터를 분석하여 답변합니다.")
+    
+    user_prompt = st.text_area("분석하고 싶은 내용을 자유롭게 적어주세요.", placeholder="예: 선택한 섹터 데이터에서 가장 순매수 금액이 큰 증권사의 특징을 요약하고 퀀트 관점에서 의견을 말해줘.")
+    
+    if st.button("✨ 퀀트 AI 분석 실행", type="primary", key="btn_llm_free"):
+        if "HF_TOKEN" not in st.secrets:
+            st.error("⚠️ `.streamlit/secrets.toml`에 `HF_TOKEN` 설정이 필요합니다.")
+        elif not user_prompt.strip():
+            st.warning("⚠️ 질문 내용을 입력해 주세요.")
+        elif df_t10.empty:
+            st.warning("⚠️ 선택하신 필터 조건에 해당하는 거래 데이터가 없습니다. 필터를 변경해 주세요.")
+        else:
+            with st.spinner("AI가 데이터를 분석하며 보고서를 작성 중입니다... (최대 20~30초 소요)"):
+                try:
+                    from huggingface_hub import InferenceClient
+                    
+                    client = InferenceClient(token=st.secrets["HF_TOKEN"])
+                    
+                    # 한국어 성능이 매우 뛰어난 72B 모델 사용
+                    model_id = "Qwen/Qwen2.5-72B-Instruct" 
+                    
+                    # LLM에게 전달할 통계 프롬프트 구성
+                    summary_lp = df_t10.groupby('회원사명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
+                    summary_lp['총대금(억)'] = summary_lp['총LP거래대금'] / 100_000_000
+                    summary_lp['순매수(억)'] = summary_lp['LP순매수대금'] / 100_000_000
+                    
+                    summary_etf = df_t10.groupby('종목명')[['총LP거래대금', 'LP순매수대금']].sum().sort_values('총LP거래대금', ascending=False).head(10)
+                    summary_etf['총대금(억)'] = summary_etf['총LP거래대금'] / 100_000_000
+                    
+                    system_content = f"""당신은 논리적이고 뛰어난 퀀트 금융 데이터 분석가입니다.
 아래 제공된 [선택 섹터 거래 요약 통계]를 바탕으로 사용자의 질문에 한국어로 명확하게 답변하세요.
 
 [선택 섹터 상위 10개 증권사(LP) 거래대금 및 순매수 (단위: 억원)]
@@ -1356,22 +1371,21 @@ with tab10:
 [선택 섹터 상위 10개 ETF 거래대금 (단위: 억원)]
 {summary_etf[['총대금(억)']].to_string()}"""
 
-                        messages = [
-                            {"role": "system", "content": system_content},
-                            {"role": "user", "content": user_prompt}
-                        ]
-                        
-                        # 무료 API 호출
-                        response = client.chat_completion(
-                            model=model_id,
-                            messages=messages,
-                            max_tokens=1024
-                        )
-                        
-                        st.markdown("---")
-                        st.write("#### 🤖 AI 분석 결과")
-                        st.write(response.choices[0].message.content)
-                        
-                    except Exception as e:
-                        st.error(f"AI 무료 서버 호출 중 지연/오류가 발생했습니다: {e}")
-                        st.info("💡 팁: 서버 특성상 사용량이 순간적으로 몰릴 수 있습니다. 10~20초 후 다시 시도해보세요.")
+                    messages = [
+                        {"role": "system", "content": system_content},
+                        {"role": "user", "content": user_prompt}
+                    ]
+                    
+                    response = client.chat_completion(
+                        model=model_id,
+                        messages=messages,
+                        max_tokens=1024
+                    )
+                    
+                    st.markdown("---")
+                    st.write("#### 🤖 AI 퀀트 분석 리포트")
+                    st.write(response.choices[0].message.content)
+                    
+                except Exception as e:
+                    st.error(f"AI 호출 중 오류가 발생했습니다: {e}")
+                    st.info("💡 에러 메세지에 '403 Forbidden'이 포함되어 있다면, 허깅페이스 토큰 발급 시 'Make calls to the serverless Inference API' 체크를 잊지 않으셨는지 확인해주세요!")
