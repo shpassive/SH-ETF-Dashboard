@@ -22,7 +22,7 @@ st.set_page_config(page_title="ETF Market Monitoring (v9.0)", layout="wide")
 st.title("📊 ETF Market Monitoring Dashboard (통합판)")
 
 # 전역 변수 설정
-CSV_FILE_ID = "1kvm2KgIlGMTIN3IOpLOUwEirKWlid8aP"
+CSV_FILE_ID = "16t0MO6FH_js_KOY-XBo6Lzm3WshpqO_4"
 EXCEL_FILE_ID = "1xdKEXMRXf0TECNRvUedJ4jU9Pz29cRo4"
 
 # ----------------------------------------------------------------------
