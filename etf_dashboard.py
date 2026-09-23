@@ -446,22 +446,22 @@ else:
 df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'].dt.date <= end_date)].copy()
 
 
+
 # ----------------------------------------------------------------------
-# UI Tabs 구성
+# UI Tabs 구성 (탭 리넘버링 적용됨)
 # ----------------------------------------------------------------------
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "1. 종합 대시보드", 
     "2. LP별 분석", 
-    "3. 운용사별 분석", 
-    "4. ETF별 분석",
+    "3. ETF별 분석", 
+    "4. 운용사별 분석",
     "5. 종목 집중도 분석", 
     "6. 시장 전체 거래대금", 
     "7. 설정/환매 추이(추정)", 
     "8. NAV 괴리율 조회", 
 ])
-
 # ==========================================
-# Tab 1: 종합 대시보드
+# Tab 1: 종합 대시보드 (기존 탭 2 내용 하단에 병합)
 # ==========================================
 with tab1:
     st.subheader("📊 시장 핵심 지표 및 추이")
@@ -518,31 +518,6 @@ with tab1:
         col2.metric("일평균 거래대금", f"{daily_avg:,.0f} 억원")
         col3.metric("유효 거래 종목 수", f"{active_etf_cnt:,} 개")
         col4.metric("활동 LP 회원사 수", f"{active_lp_cnt:,} 사")
-        
-        st.divider()
-        lp_total = df_t1.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False) / 100_000_000
-        lp_total = lp_total[lp_total > 0]
-        if not lp_total.empty:
-            fig = px.bar(lp_total, x=lp_total.index, y=lp_total.values, title="선택된 조건 내 LP사별 총 거래대금 (억원)", labels={'y': '거래대금(억)', '회원사명': '증권사'}, color_discrete_sequence=['#4A90E2'])
-            st.plotly_chart(fig, use_container_width=True)
-            
-        st.divider()
-        st.subheader("📉 시계열(Time-Series) 일별 거래대금 추이")
-        if trend_type == "시장 전체 (Total Market)":
-            daily_vol = df_t1.groupby('거래일자')['총LP거래대금'].sum().reset_index()
-            daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
-            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', title="전체 시장 일별 LP 거래대금 추이", markers=True)
-            st.plotly_chart(fig_t, use_container_width=True)
-        elif trend_type == "특정 LP사 (Specific LP)":
-            daily_vol = df_t1.groupby(['거래일자', '회원사명'])['총LP거래대금'].sum().reset_index()
-            daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
-            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='회원사명', title="선택 LP사별 일별 거래대금 추이", markers=True)
-            st.plotly_chart(fig_t, use_container_width=True)
-        elif trend_type == "특정 운용사 (Specific AMC)":
-            daily_vol = df_t1.groupby(['거래일자', 'amc'])['총LP거래대금'].sum().reset_index()
-            daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
-            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='amc', title="선택 운용사별 일별 거래대금 추이", markers=True)
-            st.plotly_chart(fig_t, use_container_width=True)
 
         st.divider()
         st.subheader("🏢 시장 점유율 (M/S %) 매트릭스")
@@ -582,6 +557,7 @@ with tab1:
         else:
             st.warning("선택하신 필터 조건에 해당하는 점유율 데이터가 없습니다.")
             
+        # ---------- 기존 2번 탭(섹터/종목 구분 분석)을 대시보드 하단에 병합 ----------
         st.divider()
         st.subheader("🥧 타겟 조건 회원사 점유율 및 성향 분석 (도넛 차트)")
         
@@ -625,9 +601,26 @@ with tab1:
             imb_df['순매수대금(억)'] = imb_df['LP순매수대금'] / 100_000_000
             st.dataframe(imb_df[['회원사명', '매도대금(억)', '매수대금(억)', '순매수대금(억)', '거래대금(억)', '순매수비율(%)']].style.format({'매도대금(억)': '{:,.0f}', '매수대금(억)': '{:,.0f}', '순매수대금(억)': '{:,.0f}', '거래대금(억)': '{:,.0f}', '순매수비율(%)': '{:.2f}%'}), use_container_width=True, hide_index=True)
 
+        st.divider()
+        st.subheader("📉 시계열(Time-Series) 일별 거래대금 추이")
+        if trend_type == "시장 전체 (Total Market)":
+            daily_vol = df_t1.groupby('거래일자')['총LP거래대금'].sum().reset_index()
+            daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
+            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', title="전체 시장 일별 LP 거래대금 추이", markers=True)
+            st.plotly_chart(fig_t, use_container_width=True)
+        elif trend_type == "특정 LP사 (Specific LP)":
+            daily_vol = df_t1.groupby(['거래일자', '회원사명'])['총LP거래대금'].sum().reset_index()
+            daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
+            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='회원사명', title="선택 LP사별 일별 거래대금 추이", markers=True)
+            st.plotly_chart(fig_t, use_container_width=True)
+        elif trend_type == "특정 운용사 (Specific AMC)":
+            daily_vol = df_t1.groupby(['거래일자', 'amc'])['총LP거래대금'].sum().reset_index()
+            daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
+            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='amc', title="선택 운용사별 일별 거래대금 추이", markers=True)
+            st.plotly_chart(fig_t, use_container_width=True)
 
 # ==========================================
-# Tab 2: LP별 분석
+# Tab 2: LP별 분석 (기존 3번 탭)
 # ==========================================
 with tab2:
     lp_list = df_filtered.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
@@ -698,23 +691,56 @@ with tab2:
         else:
             st.warning("선택하신 필터 조건에 해당하는 종목 거래 내역이 없습니다.")
 
-
 # ==========================================
-# Tab 3: 운용사별 분석 (기존 4번 탭 -> 3번으로 위치 변경)
+# Tab 3: ETF별 분석 (기존 4번 탭)
 # ==========================================
 with tab3:
+    st.subheader("🔍 특정 ETF 종목의 LP 점유율 파악")
+    etf_list = df_filtered.groupby(['a_code', '종목명'])['총LP거래대금'].sum().sort_values(ascending=False).reset_index()
+    etf_options = [f"[{row['a_code']}] {row['종목명']}" for _, row in etf_list.iterrows()]
+    
+    sync_state('t3_etf_sel', etf_options, etf_options[0] if etf_options else None)
+    selected_etf_str = st.selectbox("종목 검색 (거래대금 순 배열):", etf_options, key='t3_etf_sel')
+    
+    if selected_etf_str:
+        a_code_target = selected_etf_str.split("]")[0][1:]
+        df_target = df_filtered[df_filtered['a_code'] == a_code_target]
+        tot_target = df_target['총LP거래대금'].sum()
+        st.write(f"**해당 ETF 기간 총 거래대금:** {tot_target/100_000_000:,.0f} 억원")
+        
+        target_lp_df = df_target.groupby('회원사명')[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', 'LP매도거래량', 'LP매수거래량']].sum().reset_index()
+        target_lp_df = target_lp_df[target_lp_df['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)
+        target_lp_df['평균매도단가'] = np.where(target_lp_df['LP매도거래량'] > 0, target_lp_df['LP매도거래대금'] / target_lp_df['LP매도거래량'], 0)
+        target_lp_df['평균매수단가'] = np.where(target_lp_df['LP매수거래량'] > 0, target_lp_df['LP매수거래대금'] / target_lp_df['LP매수거래량'], 0)
+        target_lp_df['체결수량(min)'] = target_lp_df[['LP매도거래량', 'LP매수거래량']].min(axis=1)
+        target_lp_df['추정매매이익'] = (target_lp_df['평균매도단가'] - target_lp_df['평균매수단가']) * target_lp_df['체결수량(min)']
+        target_lp_df['대금(억)'] = target_lp_df['총LP거래대금'] / 100_000_000
+        target_lp_df['매도대금(억)'] = target_lp_df['LP매도거래대금'] / 100_000_000
+        target_lp_df['매수대금(억)'] = target_lp_df['LP매수거래대금'] / 100_000_000
+        target_lp_df['순매수대금(억)'] = target_lp_df['LP순매수대금'] / 100_000_000
+        target_lp_df['추정매매이익(백만)'] = target_lp_df['추정매매이익'] / 1_000_000
+        target_lp_df['점유율(%)'] = (target_lp_df['총LP거래대금'] / tot_target) * 100
+        target_lp_df['누적점유율(%)'] = target_lp_df['점유율(%)'].cumsum()
+        
+        show_cols = ['회원사명', '대금(억)', '매도대금(억)', '매수대금(억)', '순매수대금(억)', '추정매매이익(백만)', '점유율(%)', '누적점유율(%)']
+        st.dataframe(target_lp_df[show_cols].style.format({'대금(억)': '{:,.0f}', '매도대금(억)': '{:,.0f}', '매수대금(억)': '{:,.0f}', '순매수대금(억)': '{:,.0f}', '추정매매이익(백만)': '{:,.0f}', '점유율(%)': '{:.1f}%', '누적점유율(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
+
+# ==========================================
+# Tab 4: 운용사별 분석 (기존 5번 탭)
+# ==========================================
+with tab4:
     st.subheader("🏢 운용사(AMC)별 ETF 및 파트너 LP 분석")
     st.write("▼ **필터 조건 설정**")
     
-    m3, a3, r3, d3, t3_val = create_sector_filters('t3', df_filtered)
-    df_t3 = apply_sector_filters(df_filtered, m3, a3, r3, d3, t3_val)
+    m4, a4, r4, d4, t4 = create_sector_filters('t4', df_filtered)
+    df_t4 = apply_sector_filters(df_filtered, m4, a4, r4, d4, t4)
 
-    amc_list = df_t3.groupby('amc')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
-    sync_state('t3_amc_sel', amc_list, amc_list[0] if amc_list else None)
-    target_amc = st.selectbox("운용사 선택", amc_list, key='t3_amc_sel')
+    amc_list = df_t4.groupby('amc')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
+    sync_state('t4_amc_sel', amc_list, amc_list[0] if amc_list else None)
+    target_amc = st.selectbox("운용사 선택", amc_list, key='t4_amc_sel')
     
     if target_amc:
-        df_amc = df_t3[df_t3['amc'] == target_amc]
+        df_amc = df_t4[df_t4['amc'] == target_amc]
         amc_tot_vol = df_amc['총LP거래대금'].sum()
         st.success(f"**{target_amc}** (선택된 필터 기준) 총 거래대금: {amc_tot_vol/100_000_000:,.0f} 억원")
         
@@ -765,44 +791,8 @@ with tab3:
         else:
             st.warning("선택하신 필터 조건에 해당하는 거래 내역이 없습니다.")
 
-
 # ==========================================
-# Tab 4: ETF별 분석 (기존 3번 탭 -> 4번으로 위치 변경)
-# ==========================================
-with tab4:
-    st.subheader("🔍 특정 ETF 종목의 LP 점유율 파악")
-    etf_list = df_filtered.groupby(['a_code', '종목명'])['총LP거래대금'].sum().sort_values(ascending=False).reset_index()
-    etf_options = [f"[{row['a_code']}] {row['종목명']}" for _, row in etf_list.iterrows()]
-    
-    sync_state('t4_etf_sel', etf_options, etf_options[0] if etf_options else None)
-    selected_etf_str = st.selectbox("종목 검색 (거래대금 순 배열):", etf_options, key='t4_etf_sel')
-    
-    if selected_etf_str:
-        a_code_target = selected_etf_str.split("]")[0][1:]
-        df_target = df_filtered[df_filtered['a_code'] == a_code_target]
-        tot_target = df_target['총LP거래대금'].sum()
-        st.write(f"**해당 ETF 기간 총 거래대금:** {tot_target/100_000_000:,.0f} 억원")
-        
-        target_lp_df = df_target.groupby('회원사명')[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', 'LP매도거래량', 'LP매수거래량']].sum().reset_index()
-        target_lp_df = target_lp_df[target_lp_df['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)
-        target_lp_df['평균매도단가'] = np.where(target_lp_df['LP매도거래량'] > 0, target_lp_df['LP매도거래대금'] / target_lp_df['LP매도거래량'], 0)
-        target_lp_df['평균매수단가'] = np.where(target_lp_df['LP매수거래량'] > 0, target_lp_df['LP매수거래대금'] / target_lp_df['LP매수거래량'], 0)
-        target_lp_df['체결수량(min)'] = target_lp_df[['LP매도거래량', 'LP매수거래량']].min(axis=1)
-        target_lp_df['추정매매이익'] = (target_lp_df['평균매도단가'] - target_lp_df['평균매수단가']) * target_lp_df['체결수량(min)']
-        target_lp_df['대금(억)'] = target_lp_df['총LP거래대금'] / 100_000_000
-        target_lp_df['매도대금(억)'] = target_lp_df['LP매도거래대금'] / 100_000_000
-        target_lp_df['매수대금(억)'] = target_lp_df['LP매수거래대금'] / 100_000_000
-        target_lp_df['순매수대금(억)'] = target_lp_df['LP순매수대금'] / 100_000_000
-        target_lp_df['추정매매이익(백만)'] = target_lp_df['추정매매이익'] / 1_000_000
-        target_lp_df['점유율(%)'] = (target_lp_df['총LP거래대금'] / tot_target) * 100
-        target_lp_df['누적점유율(%)'] = target_lp_df['점유율(%)'].cumsum()
-        
-        show_cols = ['회원사명', '대금(억)', '매도대금(억)', '매수대금(억)', '순매수대금(억)', '추정매매이익(백만)', '점유율(%)', '누적점유율(%)']
-        st.dataframe(target_lp_df[show_cols].style.format({'대금(억)': '{:,.0f}', '매도대금(억)': '{:,.0f}', '매수대금(억)': '{:,.0f}', '순매수대금(억)': '{:,.0f}', '추정매매이익(백만)': '{:,.0f}', '점유율(%)': '{:.1f}%', '누적점유율(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
-
-
-# ==========================================
-# Tab 5: 종목 집중도 분석
+# Tab 5: 종목 집중도 분석 (기존 6번 탭)
 # ==========================================
 with tab5:
     st.subheader("🎯 종목 집중도 (HHI 및 Top-N 의존도)")
@@ -907,7 +897,7 @@ with tab5:
             st.warning("선택하신 조건 및 LP사에 해당하는 거래 내역이 없습니다.")
 
 # ==========================================
-# Tab 6: 시장 전체 거래대금
+# Tab 6: 시장 전체 거래대금 (기존 7번 탭)
 # ==========================================
 with tab6:
     st.subheader("🇰🇷 KRX 공식 시장 거래대금 분석 (Open API 연동)")
@@ -954,7 +944,7 @@ with tab6:
                     st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
 
 # ==========================================
-# Tab 7: 설정/환매 추이 추정
+# Tab 7: 설정/환매 추이 추정 (기존 8번 탭)
 # ==========================================
 with tab7:
     st.subheader("🔄 ETF별 설정/환매 추이 추정")
@@ -1095,7 +1085,7 @@ with tab7:
                         st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# Tab 8: NAV 괴리율 조회
+# Tab 8: NAV 괴리율 조회 (기존 9번 탭)
 # ==========================================
 with tab8:
     st.subheader("📐 ETF NAV vs 종가 괴리(Disparity) 분석")
