@@ -445,31 +445,6 @@ else:
 
 df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'].dt.date <= end_date)].copy()
 
-st.sidebar.divider()
-st.sidebar.header("📥 원본 데이터 다운로드")
-
-csv_data = df.to_csv(index=False, encoding='utf-8-sig')
-st.sidebar.download_button(
-    label="📄 Raw 통합 거래내역 (CSV)",
-    data=csv_data,
-    file_name=f"etf_raw_data_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
-    mime="text/csv",
-    help="알집이 풀리고 병합된 전체 원본 거래 데이터를 다운로드합니다."
-)
-
-master_df_dl = pd.DataFrame.from_dict(master_db, orient='index').reset_index()
-master_df_dl.rename(columns={'index': '표준코드'}, inplace=True)
-excel_buffer = io.BytesIO()
-master_df_dl.to_excel(excel_buffer, index=False)
-excel_data = excel_buffer.getvalue()
-
-st.sidebar.download_button(
-    label="📗 Raw 마스터 정보 (XLSX)",
-    data=excel_data,
-    file_name=f"etf_master_info_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    help="종목 및 운용사 매핑 정보가 담긴 마스터 엑셀 데이터를 다운로드합니다."
-)
 
 # ----------------------------------------------------------------------
 # UI Tabs 구성
