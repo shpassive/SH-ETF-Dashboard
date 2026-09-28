@@ -634,10 +634,16 @@ with tab2:
         ms = (lp_total_amt / sys_total_amt) * 100 if sys_total_amt > 0 else 0
         st.info(f"**{target_lp}** | 해당 기간 LP 총 거래대금: {lp_total_amt/100_000_000:,.0f} 억원 | 전체 시장 점유율(M/S): {ms:.2f}%")
         
-        # --- 1. 전체 거래 종목 상세 분석 (위로 이동됨) ---
+        # --- 1. 전체 거래 종목 상세 분석 ---
         st.subheader(f"1️⃣ [{target_lp}] 전체 거래 종목 상세 분석 (섹터 필터링 & 추정매매손익)")
+        
+        # 📌 상단에서 생성한 필터 조건을 하단의 운용사(AMC) 커버리지 표에서도 동일하게 공유합니다.
         md, ad, rd, dd, td = create_sector_filters('t2_detail', df_filtered)
+        
+        # LP사 전용 필터링 데이터
         df_detail = apply_sector_filters(df_lp, md, ad, rd, dd, td)
+        # 시장 전체 필터링 데이터 (AMC 점유율 계산용)
+        df_detail_mkt = apply_sector_filters(df_filtered, md, ad, rd, dd, td)
         
         total_detail_vol = df_detail['총LP거래대금'].sum()
         if total_detail_vol > 0:
@@ -666,33 +672,37 @@ with tab2:
             
         st.divider()
 
-        # --- 2. 섹터 및 운용사 상세 내역 (아래로 이동됨) ---
+        # --- 2. 운용사 및 섹터 상세 내역 ---
         c1, c2 = st.columns(2)
+        
         with c1:
-            st.write("2️⃣ 섹터별 상세 거래 내역 (5단계 분류)")
-            market_sector = df_filtered.groupby('category_key')['총LP거래대금'].sum()
-            lp_sector = df_lp.groupby('category_key')['총LP거래대금'].sum().reset_index()
-            lp_sector['내부비중(%)'] = (lp_sector['총LP거래대금'] / lp_total_amt) * 100
-            lp_sector['섹터내_MS(%)'] = lp_sector.apply(lambda r: (r['총LP거래대금'] / market_sector.get(r['category_key'], 1)) * 100, axis=1)
-            lp_sector['대금(억)'] = lp_sector['총LP거래대금'] / 100_000_000
-            st.dataframe(lp_sector[lp_sector['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)[['category_key', '대금(억)', '내부비중(%)', '섹터내_MS(%)']].style.format({'대금(억)': '{:,.0f}', '내부비중(%)': '{:.1f}%', '섹터내_MS(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
+            st.write("2️⃣ 운용사(AMC)별 커버리지 및 충성도 (섹터 필터링 연동)")
+            # 상단의 필터 조건(df_detail, df_detail_mkt)을 그대로 적용합니다.
+            filtered_lp_total = df_detail['총LP거래대금'].sum()
             
-        with c2:
-            st.write("3️⃣ 운용사(AMC)별 커버리지 및 충성도 (섹터 필터링)")
-            m2_1, a2_1, r2_1, d2_1, t2_1 = create_sector_filters('t2_1', df_filtered)
-            df_c2_lp = apply_sector_filters(df_lp, m2_1, a2_1, r2_1, d2_1, t2_1)
-            df_c2_mkt = apply_sector_filters(df_filtered, m2_1, a2_1, r2_1, d2_1, t2_1)
-            
-            filtered_lp_total = df_c2_lp['총LP거래대금'].sum()
             if filtered_lp_total > 0:
-                amc_lp = df_c2_lp.groupby('amc')['총LP거래대금'].sum().reset_index()
-                amc_mkt = df_c2_mkt.groupby('amc')['총LP거래대금'].sum()
+                amc_lp = df_detail.groupby('amc')['총LP거래대금'].sum().reset_index()
+                amc_mkt = df_detail_mkt.groupby('amc')['총LP거래대금'].sum()
+                
                 amc_lp['대금(억)'] = amc_lp['총LP거래대금'] / 100_000_000
                 amc_lp['내부비중(%)'] = (amc_lp['총LP거래대금'] / filtered_lp_total) * 100
                 amc_lp['AMC내_MS(%)'] = amc_lp.apply(lambda r: (r['총LP거래대금'] / amc_mkt.get(r['amc'], 1)) * 100 if amc_mkt.get(r['amc'], 0) > 0 else 0, axis=1)
+                
                 st.dataframe(amc_lp[amc_lp['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)[['amc', '대금(억)', '내부비중(%)', 'AMC내_MS(%)']].style.format({'대금(억)': '{:,.0f}', '내부비중(%)': '{:.1f}%', 'AMC내_MS(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
             else:
-                st.warning("선택하신 필터 조건에 해당하는 LP 거래 내역이 없습니다.")
+                st.warning("선택하신 상단 필터 조건에 해당하는 LP 거래 내역이 없습니다.")
+                
+        with c2:
+            st.write("3️⃣ 섹터별 상세 거래 내역 (5단계 분류)")
+            # 섹터별 내역은 해당 LP의 전체적인 특성을 파악하기 위해 필터 적용 전 데이터(df_lp)를 유지합니다.
+            market_sector = df_filtered.groupby('category_key')['총LP거래대금'].sum()
+            lp_sector = df_lp.groupby('category_key')['총LP거래대금'].sum().reset_index()
+            
+            lp_sector['내부비중(%)'] = (lp_sector['총LP거래대금'] / lp_total_amt) * 100
+            lp_sector['섹터내_MS(%)'] = lp_sector.apply(lambda r: (r['총LP거래대금'] / market_sector.get(r['category_key'], 1)) * 100, axis=1)
+            lp_sector['대금(억)'] = lp_sector['총LP거래대금'] / 100_000_000
+            
+            st.dataframe(lp_sector[lp_sector['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)[['category_key', '대금(억)', '내부비중(%)', '섹터내_MS(%)']].style.format({'대금(억)': '{:,.0f}', '내부비중(%)': '{:.1f}%', '섹터내_MS(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
 
 # ==========================================
 # Tab 3: ETF별 분석 (기존 4번 탭)
