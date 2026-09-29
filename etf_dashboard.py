@@ -623,27 +623,45 @@ with tab1:
 # Tab 2: LP별 분석 (기존 3번 탭)
 # ==========================================
 with tab2:
-    lp_list = df_filtered.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
-    sync_state('t2_target_lp', lp_list, lp_list[0] if lp_list else None)
-    target_lp = st.selectbox("📌 분석 대상 LP사 선택", lp_list, key='t2_target_lp')
+    # --- 상단 공통 필터 영역 (LP 및 운용사 다중 선택) ---
+    c_top1, c_top2 = st.columns(2)
+    
+    with c_top1:
+        lp_list = df_filtered.groupby('회원사명')['총LP거래대금'].sum().sort_values(ascending=False).index.tolist()
+        sync_state('t2_target_lp', lp_list, lp_list[0] if lp_list else None)
+        target_lp = st.selectbox("📌 분석 대상 LP사 선택", lp_list, key='t2_target_lp')
+        
+    with c_top2:
+        amc_list_t2 = sorted([a for a in df_filtered['amc'].unique() if a != '미분류'])
+        sync_state('t2_target_amcs', amc_list_t2, [])
+        target_amcs_t2 = st.multiselect("📌 분석 대상 운용사(AMC) 선택 (비워두면 전체 운용사)", amc_list_t2, key='t2_target_amcs')
     
     if target_lp:
-        df_lp = df_filtered[df_filtered['회원사명'] == target_lp]
+        # 1. 운용사(AMC) 필터 적용 (탭 전체 적용)
+        if target_amcs_t2:
+            df_t2_base = df_filtered[df_filtered['amc'].isin(target_amcs_t2)]
+        else:
+            df_t2_base = df_filtered.copy()
+            
+        # 2. 해당 LP 데이터 추출
+        df_lp = df_t2_base[df_t2_base['회원사명'] == target_lp]
+        
         lp_total_amt = df_lp['총LP거래대금'].sum()
-        sys_total_amt = df_filtered['총LP거래대금'].sum()
+        sys_total_amt = df_t2_base['총LP거래대금'].sum()
         ms = (lp_total_amt / sys_total_amt) * 100 if sys_total_amt > 0 else 0
-        st.info(f"**{target_lp}** | 해당 기간 LP 총 거래대금: {lp_total_amt/100_000_000:,.0f} 억원 | 전체 시장 점유율(M/S): {ms:.2f}%")
+        
+        filter_msg = f"({', '.join(target_amcs_t2)})" if target_amcs_t2 else "(전체 운용사)"
+        st.info(f"**{target_lp}** | 해당 기간 {filter_msg} LP 총 거래대금: {lp_total_amt/100_000_000:,.0f} 억원 | 시장 점유율(M/S): {ms:.2f}%")
         
         # --- 1. 전체 거래 종목 상세 분석 ---
         st.subheader(f"1️⃣ [{target_lp}] 전체 거래 종목 상세 분석 (섹터 필터링 & 추정매매손익)")
         
-        # 📌 상단에서 생성한 필터 조건을 하단의 운용사(AMC) 커버리지 표에서도 동일하게 공유합니다.
+        # 📌 하단의 커버리지 표 및 시계열 그래프에서도 동일하게 공유될 섹터 필터
         md, ad, rd, dd, td = create_sector_filters('t2_detail', df_filtered)
         
-        # LP사 전용 필터링 데이터
+        # 섹터 필터 추가 적용
         df_detail = apply_sector_filters(df_lp, md, ad, rd, dd, td)
-        # 시장 전체 필터링 데이터 (AMC 점유율 계산용)
-        df_detail_mkt = apply_sector_filters(df_filtered, md, ad, rd, dd, td)
+        df_detail_mkt = apply_sector_filters(df_t2_base, md, ad, rd, dd, td)
         
         total_detail_vol = df_detail['총LP거래대금'].sum()
         if total_detail_vol > 0:
@@ -677,7 +695,6 @@ with tab2:
         
         with c1:
             st.write("2️⃣ 운용사(AMC)별 커버리지 및 충성도 (섹터 필터링 연동)")
-            # 상단의 필터 조건(df_detail, df_detail_mkt)을 그대로 적용합니다.
             filtered_lp_total = df_detail['총LP거래대금'].sum()
             
             if filtered_lp_total > 0:
@@ -694,15 +711,38 @@ with tab2:
                 
         with c2:
             st.write("3️⃣ 섹터별 상세 거래 내역 (5단계 분류)")
-            # 섹터별 내역은 해당 LP의 전체적인 특성을 파악하기 위해 필터 적용 전 데이터(df_lp)를 유지합니다.
-            market_sector = df_filtered.groupby('category_key')['총LP거래대금'].sum()
+            # 섹터별 내역은 해당 LP의 전체적인 특성을 파악하기 위해 섹터 필터 적용 전, 운용사 필터만 적용된 데이터(df_lp)를 유지합니다.
+            market_sector = df_t2_base.groupby('category_key')['총LP거래대금'].sum()
             lp_sector = df_lp.groupby('category_key')['총LP거래대금'].sum().reset_index()
             
-            lp_sector['내부비중(%)'] = (lp_sector['총LP거래대금'] / lp_total_amt) * 100
+            lp_sector['내부비중(%)'] = (lp_sector['총LP거래대금'] / lp_total_amt) * 100 if lp_total_amt > 0 else 0
             lp_sector['섹터내_MS(%)'] = lp_sector.apply(lambda r: (r['총LP거래대금'] / market_sector.get(r['category_key'], 1)) * 100, axis=1)
             lp_sector['대금(억)'] = lp_sector['총LP거래대금'] / 100_000_000
             
             st.dataframe(lp_sector[lp_sector['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)[['category_key', '대금(억)', '내부비중(%)', '섹터내_MS(%)']].style.format({'대금(억)': '{:,.0f}', '내부비중(%)': '{:.1f}%', '섹터내_MS(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # --- 3. 선택 LP의 운용사별 일별 거래대금 추이 ---
+        st.subheader(f"4️⃣ [{target_lp}] 운용사별 일별 거래대금 시계열 추이")
+        st.write("*(위의 운용사 복수 선택 및 섹터 필터가 모두 반영된 결과입니다.)*")
+        
+        if not df_detail.empty:
+            daily_amc_vol = df_detail.groupby(['거래일자', 'amc'])['총LP거래대금'].sum().reset_index()
+            daily_amc_vol['거래대금(억)'] = daily_amc_vol['총LP거래대금'] / 100_000_000
+            
+            fig_t2_ts = px.line(
+                daily_amc_vol, 
+                x='거래일자', 
+                y='거래대금(억)', 
+                color='amc',
+                title=f"{target_lp}의 일별 운용사(AMC) 거래대금 추이", 
+                markers=True,
+                labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', 'amc': '운용사'}
+            )
+            st.plotly_chart(fig_t2_ts, use_container_width=True)
+        else:
+            st.warning("조건에 해당하는 시계열 그래프 데이터가 없습니다.")
 
 # ==========================================
 # Tab 3: ETF별 분석 (기존 4번 탭)
