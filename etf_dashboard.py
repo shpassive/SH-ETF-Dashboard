@@ -708,35 +708,67 @@ with tab2:
 # Tab 3: ETF별 분석 (기존 4번 탭)
 # ==========================================
 with tab3:
-    st.subheader("🔍 특정 ETF 종목의 LP 점유율 파악")
+    st.subheader("🔍 특정 ETF 종목의 LP 점유율 및 시계열 분석")
     etf_list = df_filtered.groupby(['a_code', '종목명'])['총LP거래대금'].sum().sort_values(ascending=False).reset_index()
     etf_options = [f"[{row['a_code']}] {row['종목명']}" for _, row in etf_list.iterrows()]
     
-    sync_state('t3_etf_sel', etf_options, etf_options[0] if etf_options else None)
-    selected_etf_str = st.selectbox("종목 검색 (거래대금 순 배열):", etf_options, key='t3_etf_sel')
+    # 복수 선택을 위해 초기값을 리스트 형태로 설정
+    default_sel = [etf_options[0]] if etf_options else []
+    sync_state('t3_etf_sel', etf_options, default_sel)
     
-    if selected_etf_str:
-        a_code_target = selected_etf_str.split("]")[0][1:]
-        df_target = df_filtered[df_filtered['a_code'] == a_code_target]
-        tot_target = df_target['총LP거래대금'].sum()
-        st.write(f"**해당 ETF 기간 총 거래대금:** {tot_target/100_000_000:,.0f} 억원")
+    # Selectbox에서 Multiselect로 변경
+    selected_etf_strs = st.multiselect("종목 검색 (다중 선택 가능, 거래대금 순 배열):", etf_options, key='t3_etf_sel')
+    
+    if selected_etf_strs:
+        # 선택된 복수의 단축코드 추출
+        a_code_targets = [s.split("]")[0][1:] for s in selected_etf_strs]
+        df_target = df_filtered[df_filtered['a_code'].isin(a_code_targets)]
         
+        # 합계 총 거래대금
+        tot_target = df_target['총LP거래대금'].sum()
+        st.write(f"**선택 ETF(합계) 기간 총 거래대금:** {tot_target/100_000_000:,.0f} 억원")
+        
+        # LP별 실적 (선택한 모든 ETF의 합계 데이터 기준)
         target_lp_df = df_target.groupby('회원사명')[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', 'LP매도거래량', 'LP매수거래량']].sum().reset_index()
         target_lp_df = target_lp_df[target_lp_df['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)
+        
         target_lp_df['평균매도단가'] = np.where(target_lp_df['LP매도거래량'] > 0, target_lp_df['LP매도거래대금'] / target_lp_df['LP매도거래량'], 0)
         target_lp_df['평균매수단가'] = np.where(target_lp_df['LP매수거래량'] > 0, target_lp_df['LP매수거래대금'] / target_lp_df['LP매수거래량'], 0)
         target_lp_df['체결수량(min)'] = target_lp_df[['LP매도거래량', 'LP매수거래량']].min(axis=1)
         target_lp_df['추정매매이익'] = (target_lp_df['평균매도단가'] - target_lp_df['평균매수단가']) * target_lp_df['체결수량(min)']
+        
         target_lp_df['대금(억)'] = target_lp_df['총LP거래대금'] / 100_000_000
         target_lp_df['매도대금(억)'] = target_lp_df['LP매도거래대금'] / 100_000_000
         target_lp_df['매수대금(억)'] = target_lp_df['LP매수거래대금'] / 100_000_000
         target_lp_df['순매수대금(억)'] = target_lp_df['LP순매수대금'] / 100_000_000
         target_lp_df['추정매매이익(백만)'] = target_lp_df['추정매매이익'] / 1_000_000
-        target_lp_df['점유율(%)'] = (target_lp_df['총LP거래대금'] / tot_target) * 100
+        target_lp_df['점유율(%)'] = (target_lp_df['총LP거래대금'] / tot_target) * 100 if tot_target > 0 else 0
         target_lp_df['누적점유율(%)'] = target_lp_df['점유율(%)'].cumsum()
         
         show_cols = ['회원사명', '대금(억)', '매도대금(억)', '매수대금(억)', '순매수대금(억)', '추정매매이익(백만)', '점유율(%)', '누적점유율(%)']
         st.dataframe(target_lp_df[show_cols].style.format({'대금(억)': '{:,.0f}', '매도대금(억)': '{:,.0f}', '매수대금(억)': '{:,.0f}', '순매수대금(억)': '{:,.0f}', '추정매매이익(백만)': '{:,.0f}', '점유율(%)': '{:.1f}%', '누적점유율(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # --- 3. 선택 ETF 시계열 추이 차트 추가 ---
+        st.subheader("📉 선택 ETF 일별 거래대금 추이")
+        
+        daily_etf_vol = df_target.groupby(['거래일자', '종목명'])['총LP거래대금'].sum().reset_index()
+        daily_etf_vol['거래대금(억)'] = daily_etf_vol['총LP거래대금'] / 100_000_000
+        
+        fig_t3 = px.line(
+            daily_etf_vol, 
+            x='거래일자', 
+            y='거래대금(억)', 
+            color='종목명',
+            title="선택 종목별 일별 거래대금 추이", 
+            markers=True,
+            labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', '종목명': 'ETF 종목'}
+        )
+        st.plotly_chart(fig_t3, use_container_width=True)
+
+    else:
+        st.warning("분석할 ETF 종목을 하나 이상 선택해주세요.")
 
 # ==========================================
 # Tab 4: 운용사별 분석 (기존 5번 탭)
