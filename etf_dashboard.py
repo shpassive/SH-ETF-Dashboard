@@ -738,7 +738,8 @@ with tab2:
                 color='amc',
                 title=f"{target_lp}의 일별 운용사(AMC) 거래대금 추이", 
                 markers=True,
-                labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', 'amc': '운용사'}
+                labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', 'amc': '운용사'},
+                render_mode='svg'  # 🔥 WebGL 에러 방지용 옵션 추가
             )
             st.plotly_chart(fig_t2_ts, use_container_width=True)
         else:
