@@ -809,22 +809,23 @@ with tab3:
 
         st.divider()
 
-        # --- 4. 선택 ETF 합계 시계열 추이 차트 (LP사별) 추가 ---
+        # --- 4. 선택 ETF 합계 시계열 추이 차트 (LP사별) 수정 ---
         st.subheader("📉 선택 ETF 합계 일별 거래대금 추이 (LP사별)")
-        st.write("*(위에서 선택한 ETF 종목들의 합산 거래대금을 LP 회원사별로 분리하여 보여줍니다.)*")
+        st.write("*(선택을 비워두면 관련된 전체 LP사가 조회됩니다.)*")
         
         # 해당 ETF들을 거래한 전체 LP사 목록 추출 (거래대금 순 정렬)
         lp_options_t3 = target_lp_df['회원사명'].tolist()
         
-        # 전체 LP가 차트에 겹치면 복잡하므로 기본값은 상위 5개사로 설정
-        default_lps_t3 = lp_options_t3[:5] if len(lp_options_t3) >= 5 else lp_options_t3
-        sync_state('t3_lp_sel', lp_options_t3, default_lps_t3)
+        # 기본값을 빈 리스트([])로 설정하여 처음엔 아무것도 선택되지 않게 함
+        sync_state('t3_lp_sel', lp_options_t3, [])
+        selected_lps_t3 = st.multiselect("차트에 표시할 LP사 선택 (선택 해제 시 전체 조회):", lp_options_t3, key='t3_lp_sel')
         
-        selected_lps_t3 = st.multiselect("차트에 표시할 LP사 선택 (다중 선택 가능):", lp_options_t3, key='t3_lp_sel')
+        # 선택된 항목이 없으면 전체 LP 리스트를 타겟으로 지정
+        target_lps_t3 = selected_lps_t3 if selected_lps_t3 else lp_options_t3
         
-        if selected_lps_t3:
-            # 선택된 LP사로 데이터 2차 필터링
-            df_target_lp = df_target[df_target['회원사명'].isin(selected_lps_t3)]
+        if target_lps_t3:
+            # 타겟팅된 LP사로 데이터 필터링
+            df_target_lp = df_target[df_target['회원사명'].isin(target_lps_t3)]
             
             # 날짜와 회원사 기준으로 합계 도출
             daily_lp_vol = df_target_lp.groupby(['거래일자', '회원사명'])['총LP거래대금'].sum().reset_index()
@@ -835,13 +836,11 @@ with tab3:
                 x='거래일자', 
                 y='거래대금(억)', 
                 color='회원사명',
-                title="선택 종목(합산)의 LP사별 일별 거래대금 추이", 
+                title=f"선택 종목(합산)의 LP사별 일별 거래대금 추이 ({len(target_lps_t3)}개사)", 
                 markers=True,
                 labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', '회원사명': 'LP사'}
             )
             st.plotly_chart(fig_t3_lp, use_container_width=True)
-        else:
-            st.warning("차트에 표시할 LP사를 하나 이상 선택해주세요.")
 
     else:
         st.warning("분석할 ETF 종목을 하나 이상 선택해주세요.")
