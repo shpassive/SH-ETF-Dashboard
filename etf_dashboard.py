@@ -803,7 +803,8 @@ with tab3:
             color='종목명',
             title="선택 종목별 일별 거래대금 추이", 
             markers=True,
-            labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', '종목명': 'ETF 종목'}
+            labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', '종목명': 'ETF 종목'},
+            render_mode='svg'  # 🔥 WebGL 에러 방지용 옵션 추가
         )
         st.plotly_chart(fig_t3, use_container_width=True)
 
@@ -838,7 +839,8 @@ with tab3:
                 color='회원사명',
                 title=f"선택 종목(합산)의 LP사별 일별 거래대금 추이 ({len(target_lps_t3)}개사)", 
                 markers=True,
-                labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', '회원사명': 'LP사'}
+                labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', '회원사명': 'LP사'},
+                render_mode='svg'  # 🔥 WebGL 에러 방지용 옵션 추가
             )
             st.plotly_chart(fig_t3_lp, use_container_width=True)
 
