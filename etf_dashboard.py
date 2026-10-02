@@ -777,14 +777,17 @@ with tab3:
         tot_target = df_target['총LP거래대금'].sum()
         st.write(f"**선택 ETF(합계) 기간 총 거래대금:** {tot_target/100_000_000:,.0f} 억원")
         
-        # LP별 실적 (선택한 모든 ETF의 합계 데이터 기준)
-        target_lp_df = df_target.groupby('회원사명')[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', 'LP매도거래량', 'LP매수거래량']].sum().reset_index()
-        target_lp_df = target_lp_df[target_lp_df['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)
+        # 1. 회원사 및 종목별로 그룹화하여 개별 ETF의 추정매매손익을 먼저 정확히 계산
+        etf_level_df = df_target.groupby(['회원사명', '종목명'])[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', 'LP매도거래량', 'LP매수거래량']].sum().reset_index()
         
-        target_lp_df['평균매도단가'] = np.where(target_lp_df['LP매도거래량'] > 0, target_lp_df['LP매도거래대금'] / target_lp_df['LP매도거래량'], 0)
-        target_lp_df['평균매수단가'] = np.where(target_lp_df['LP매수거래량'] > 0, target_lp_df['LP매수거래대금'] / target_lp_df['LP매수거래량'], 0)
-        target_lp_df['체결수량(min)'] = target_lp_df[['LP매도거래량', 'LP매수거래량']].min(axis=1)
-        target_lp_df['추정매매이익'] = (target_lp_df['평균매도단가'] - target_lp_df['평균매수단가']) * target_lp_df['체결수량(min)']
+        etf_level_df['평균매도단가'] = np.where(etf_level_df['LP매도거래량'] > 0, etf_level_df['LP매도거래대금'] / etf_level_df['LP매도거래량'], 0)
+        etf_level_df['평균매수단가'] = np.where(etf_level_df['LP매수거래량'] > 0, etf_level_df['LP매수거래대금'] / etf_level_df['LP매수거래량'], 0)
+        etf_level_df['체결수량(min)'] = etf_level_df[['LP매도거래량', 'LP매수거래량']].min(axis=1)
+        etf_level_df['추정매매이익'] = (etf_level_df['평균매도단가'] - etf_level_df['평균매수단가']) * etf_level_df['체결수량(min)']
+        
+        # 2. 회원사 기준으로 최종 합산 (개별 종목에서 구한 추정매매손익을 합산)
+        target_lp_df = etf_level_df.groupby('회원사명')[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', '추정매매이익']].sum().reset_index()
+        target_lp_df = target_lp_df[target_lp_df['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)
         
         target_lp_df['대금(억)'] = target_lp_df['총LP거래대금'] / 100_000_000
         target_lp_df['매도대금(억)'] = target_lp_df['LP매도거래대금'] / 100_000_000
