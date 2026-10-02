@@ -401,6 +401,14 @@ def get_krx_daily_nav_shares(ticker, start_date, end_date):
 # 사이드바 (업데이트 버튼 및 Date Filter)
 # ----------------------------------------------------------------------
 st.sidebar.header("⚙️ 데이터 관리")
+
+# ✅ 새로 추가된 이메일 즉시 갱신 버튼
+if st.sidebar.button("🔄 최신 데이터 수신 (새로고침)"):
+    st.cache_data.clear()
+    st.toast("캐시가 초기화되었습니다. 최신 이메일 및 데이터를 수집합니다.", icon="🔄")
+    time.sleep(1)
+    st.rerun()
+
 if has_new_data:
     st.sidebar.info("💡 **새로운 메일 데이터가 병합되었습니다.** 드라이브에 원본을 저장하시겠습니까?")
 if st.sidebar.button("💾 구글 드라이브 원본 덮어쓰기", type="primary"):
@@ -409,7 +417,7 @@ if st.sidebar.button("💾 구글 드라이브 원본 덮어쓰기", type="prima
             st.cache_data.clear() 
             st.sidebar.success("저장 완료! 화면을 새로고침합니다.")
             time.sleep(1)         
-            st.rerun()             
+            st.rerun()              
 
 st.sidebar.divider()
 st.sidebar.header("🗓️ 데이터 날짜 설정")
