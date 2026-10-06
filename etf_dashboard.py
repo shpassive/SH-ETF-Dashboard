@@ -468,6 +468,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "7. 설정/환매 추이(추정)", 
     "8. NAV 괴리율 조회", 
 ])
+
 # ==========================================
 # Tab 1: 종합 대시보드 (기존 탭 2 내용 하단에 병합)
 # ==========================================
@@ -578,17 +579,32 @@ with tab1:
         agg_df = t1_etf.groupby('회원사명')[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', '추정매매이익']].sum().reset_index()
         agg_df = agg_df[agg_df['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)
         
+        # [신규 추가] 커버 종목수 합산 병합 (유효 거래가 있는 종목 기준)
+        cover_cnt = t1_etf[t1_etf['총LP거래대금'] > 0].groupby('회원사명')['종목명'].nunique().reset_index(name='커버종목수')
+        agg_df = agg_df.merge(cover_cnt, on='회원사명', how='left').fillna({'커버종목수': 0})
+        
         total_vol = agg_df['총LP거래대금'].sum()
         agg_df['점유율(%)'] = (agg_df['총LP거래대금'] / total_vol) * 100 if total_vol > 0 else 0
         agg_df['거래대금(억)'] = agg_df['총LP거래대금'] / 100_000_000
         agg_df['추정매매손익(백만)'] = agg_df['추정매매이익'] / 1_000_000
         
+        # [신규 추가] 종목집중도 산출
+        agg_df['종목집중도(억/종목)'] = np.where(agg_df['커버종목수'] > 0, agg_df['거래대금(억)'] / agg_df['커버종목수'], 0)
+        
         st.write("#### 1️⃣ 회원사 점유율 상세")
-        col_t1_1, col_t1_2 = st.columns([1, 1])
+        # 컬럼이 늘어났으므로 좌측 데이터프레임 표의 넓이 비율을 1.2로 확대 배정
+        col_t1_1, col_t1_2 = st.columns([1.2, 1])
         with col_t1_1:
-            show_df = agg_df[['회원사명', '거래대금(억)', '추정매매손익(백만)', '점유율(%)']].copy()
+            # 출력 컬럼에 커버종목수, 종목집중도 추가
+            show_df = agg_df[['회원사명', '거래대금(억)', '점유율(%)', '커버종목수', '종목집중도(억/종목)', '추정매매손익(백만)']].copy()
             show_df['순위'] = range(1, len(show_df) + 1)
-            st.dataframe(show_df.set_index('순위').style.format({'거래대금(억)': '{:,.0f}', '추정매매손익(백만)': '{:,.0f}', '점유율(%)': '{:.1f}%'}), use_container_width=True)
+            st.dataframe(show_df.set_index('순위').style.format({
+                '거래대금(억)': '{:,.0f}',
+                '점유율(%)': '{:.1f}%',
+                '커버종목수': '{:,.0f}',
+                '종목집중도(억/종목)': '{:,.1f}',
+                '추정매매손익(백만)': '{:,.0f}'
+            }), use_container_width=True)
         with col_t1_2:
             if not agg_df.empty:
                 fig2 = px.pie(agg_df.head(10), values='거래대금(억)', names='회원사명', hole=0.4, title="Top 10 LP 점유율 밴다이아그램")
@@ -626,7 +642,6 @@ with tab1:
             daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
             fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='amc', title="선택 운용사별 일별 거래대금 추이", markers=True)
             st.plotly_chart(fig_t, use_container_width=True)
-
 # ==========================================
 # Tab 2: LP별 분석 (기존 3번 탭)
 # ==========================================
