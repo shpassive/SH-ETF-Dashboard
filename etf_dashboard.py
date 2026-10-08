@@ -691,6 +691,130 @@ with tab2:
         if total_detail_vol > 0:
             detail_etfs = df_detail.groupby('종목명')[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', 'LP매도거래량', 'LP매수거래량']].sum().reset_index()
             detail_etfs = detail_etfs[detail_etfs['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False).reset_index(drop=True)
+            detail_etfs['순위'] = detail_etfs.index + 1
+            detail_etfs['평균매도단가'] = np.where(detail_etfs['LP매도거래량'] > 0, detail_etfs['LP매도거래대금'] / detail_etfs['LP매도거래량'], 0)
+            detail_etfs['평균매수단가'] = np.where(detail_etfs['LP매수거래량'] > 0, detail_etfs['LP매수거래대금'] / detail_etfs['LP매수거래량'], 0)
+            detail_etfs['체결수량(min)'] = detail_etfs[['LP매도거래량', 'LP매수거래량']].min(axis=1)
+            detail_etfs['추정매매이익'] = (detail_etfs['평균매도단가'] - detail_etfs['평균매수단가']) * detail_etfs['체결수량(min)']
+            detail_etfs['거래대금(억)'] = detail_etfs['총LP거래대금'] / 100_000_000
+            detail_etfs['매도대금(억)'] = detail_etfs['LP매도거래대금'] / 100_000_000
+            detail_etfs['매수대금(억)'] = detail_etfs['LP매수거래대금'] / 100_000_000
+            detail_etfs['순매수대금(억)'] = detail_etfs['LP순매수대금'] / 100_000_000
+            detail_etfs['추정매매손익(백만)'] = detail_etfs['추정매매이익'] / 1_000_000
+            detail_etfs['비중(%)'] = (detail_etfs['총LP거래대금'] / total_detail_vol) * 100
+            
+            # --- [신규 추가] 시장 전체 데이터를 활용한 종목별 거래순위 및 점유율 계산 ---
+            mkt_grp = df_detail_mkt.groupby(['종목명', '회원사명'])['총LP거래대금'].sum().reset_index()
+            # 1) 종목별 전체 시장 대금 합계
+            mkt_tot = mkt_grp.groupby('종목명')['총LP거래대금'].sum().reset_index().rename(columns={'총LP거래대금': '시장전체대금'})
+            # 2) 종목별 내에서 각 LP들의 순위 책정
+            mkt_grp['거래순위'] = mkt_grp.groupby('종목명')['총LP거래대금'].rank(method='min', ascending=False)
+            
+            # 현재 선택된 LP의 종목별 순위만 추출하여 본 데이터(detail_etfs)에 병합
+            lp_stats = mkt_grp[mkt_grp['회원사명'] == target_lp][['종목명', '거래순위']]
+            detail_etfs = detail_etfs.merge(lp_stats, on='종목명', how='left')
+            detail_etfs = detail_etfs.merge(mkt_tot, on='종목명', how='left')
+            
+            # 3) 각 종목에 대한 해당 LP의 점유율 계산
+            detail_etfs['점유율(%)'] = np.where(detail_etfs['시장전체대금'] > 0, (detail_etfs['총LP거래대금'] / detail_etfs['시장전체대금']) * 100, 0)
+            # --------------------------------------------------------------------------
+            
+            # 총 합계 행 생성 (합계의 점유율은 보유 종목 전체 대금 기준)
+            tot_lp_vol = detail_etfs['총LP거래대금'].sum()
+            tot_mkt_vol = detail_etfs['시장전체대금'].sum()
+            avg_ms = (tot_lp_vol / tot_mkt_vol * 100) if tot_mkt_vol > 0 else 0
+
+            total_row = pd.DataFrame([{
+                '순위': 0, 
+                '종목명': '📊 [총 합계]', 
+                '거래대금(억)': detail_etfs['거래대금(억)'].sum(), 
+                '거래순위': np.nan,  # 합계행 순위는 공백 처리
+                '점유율(%)': avg_ms,
+                '매도대금(억)': detail_etfs['매도대금(억)'].sum(), 
+                '매수대금(억)': detail_etfs['매수대금(억)'].sum(), 
+                '순매수대금(억)': detail_etfs['순매수대금(억)'].sum(), 
+                '추정매매손익(백만)': detail_etfs['추정매매손익(백만)'].sum(), 
+                '비중(%)': 100.0
+            }])
+            detail_etfs = pd.concat([total_row, detail_etfs], ignore_index=True)
+            
+            st.write(f"해당 필터 조건 거래 종목 수: **{len(detail_etfs)-1:,}개** | 기간 총 거래대금: **{total_detail_vol/100_000_000:,.0f}억원**")
+            
+            # 테이블에 띄울 컬럼에 '거래순위', '점유율(%)' 추가
+            show_cols = ['순위', '종목명', '거래대금(억)', '거래순위', '점유율(%)', '매도대금(억)', '매수대금(억)', '순매수대금(억)', '추정매매손익(백만)', '비중(%)']
+            
+            # 출력 포맷팅 적용 (na_rep='-' 를 통해 합계행의 NaN을 '-'로 이쁘게 가려줍니다)
+            format_dict = {
+                '거래대금(억)': '{:,.0f}', 
+                '거래순위': '{:.0f}위', 
+                '점유율(%)': '{:.1f}%',
+                '매도대금(억)': '{:,.0f}', 
+                '매수대금(억)': '{:,.0f}', 
+                '순매수대금(억)': '{:,.0f}', 
+                '추정매매손익(백만)': '{:,.0f}', 
+                '비중(%)': '{:.2f}%'
+            }
+            st.dataframe(detail_etfs[show_cols].set_index('순위').style.format(format_dict, na_rep='-'), use_container_width=True)
+        else:
+            st.warning("선택하신 필터 조건에 해당하는 종목 거래 내역이 없습니다.")
+            
+        st.divider()
+
+        # --- 2. 운용사 및 섹터 상세 내역 ---
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.write("2️⃣ 운용사(AMC)별 커버리지 및 충성도 (섹터 필터링 연동)")
+            filtered_lp_total = df_detail['총LP거래대금'].sum()
+            
+            if filtered_lp_total > 0:
+                amc_lp = df_detail.groupby('amc')['총LP거래대금'].sum().reset_index()
+                amc_mkt = df_detail_mkt.groupby('amc')['총LP거래대금'].sum()
+                
+                amc_lp['대금(억)'] = amc_lp['총LP거래대금'] / 100_000_000
+                amc_lp['내부비중(%)'] = (amc_lp['총LP거래대금'] / filtered_lp_total) * 100
+                amc_lp['AMC내_MS(%)'] = amc_lp.apply(lambda r: (r['총LP거래대금'] / amc_mkt.get(r['amc'], 1)) * 100 if amc_mkt.get(r['amc'], 0) > 0 else 0, axis=1)
+                
+                st.dataframe(amc_lp[amc_lp['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)[['amc', '대금(억)', '내부비중(%)', 'AMC내_MS(%)']].style.format({'대금(억)': '{:,.0f}', '내부비중(%)': '{:.1f}%', 'AMC내_MS(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
+            else:
+                st.warning("선택하신 상단 필터 조건에 해당하는 LP 거래 내역이 없습니다.")
+                
+        with c2:
+            st.write("3️⃣ 섹터별 상세 거래 내역 (5단계 분류)")
+            # 섹터별 내역은 해당 LP의 전체적인 특성을 파악하기 위해 섹터 필터 적용 전, 운용사 필터만 적용된 데이터(df_lp)를 유지합니다.
+            market_sector = df_t2_base.groupby('category_key')['총LP거래대금'].sum()
+            lp_sector = df_lp.groupby('category_key')['총LP거래대금'].sum().reset_index()
+            
+            lp_sector['내부비중(%)'] = (lp_sector['총LP거래대금'] / lp_total_amt) * 100 if lp_total_amt > 0 else 0
+            lp_sector['섹터내_MS(%)'] = lp_sector.apply(lambda r: (r['총LP거래대금'] / market_sector.get(r['category_key'], 1)) * 100, axis=1)
+            lp_sector['대금(억)'] = lp_sector['총LP거래대금'] / 100_000_000
+            
+            st.dataframe(lp_sector[lp_sector['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)[['category_key', '대금(억)', '내부비중(%)', '섹터내_MS(%)']].style.format({'대금(억)': '{:,.0f}', '내부비중(%)': '{:.1f}%', '섹터내_MS(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # --- 3. 선택 LP의 운용사별 일별 거래대금 추이 ---
+        st.subheader(f"4️⃣ [{target_lp}] 운용사별 일별 거래대금 시계열 추이")
+        st.write("*(위의 운용사 복수 선택 및 섹터 필터가 모두 반영된 결과입니다.)*")
+        
+        if not df_detail.empty:
+            daily_amc_vol = df_detail.groupby(['거래일자', 'amc'])['총LP거래대금'].sum().reset_index()
+            daily_amc_vol['거래대금(억)'] = daily_amc_vol['총LP거래대금'] / 100_000_000
+            
+            fig_t2_ts = px.line(
+                daily_amc_vol, 
+                x='거래일자', 
+                y='거래대금(억)', 
+                color='amc',
+                title=f"{target_lp}의 일별 운용사(AMC) 거래대금 추이", 
+                markers=True,
+                labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', 'amc': '운용사'},
+                render_mode='svg'  # 🔥 WebGL 에러 방지용 옵션 추가
+            )
+            st.plotly_chart(fig_t2_ts, use_container_width=True)
+        else:
+            st.warning("조건에 해당하는 시계열 그래프 데이터가 없습니다.")
+
 
 # ==========================================
 # Tab 3: ETF별 분석 (기존 4번 탭)
