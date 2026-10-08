@@ -26,7 +26,7 @@ CSV_FILE_ID = "16t0MO6FH_js_KOY-XBo6Lzm3WshpqO_4"
 EXCEL_FILE_ID = "1xdKEXMRXf0TECNRvUedJ4jU9Pz29cRo4"
 
 # ----------------------------------------------------------------------
-# 🌟 상태 유지 헬퍼 함수 (수정됨: 세션 충돌 방지)
+# 🌟 상태 유지 헬퍼 함수
 # ----------------------------------------------------------------------
 def sync_state(key, valid_options, default_val):
     if key not in st.session_state:
@@ -35,19 +35,18 @@ def sync_state(key, valid_options, default_val):
         saved = st.session_state[key]
         if isinstance(saved, list):
             valid = [x for x in saved if x in valid_options]
-            if saved != valid:
-                st.session_state[key] = valid
+            st.session_state[key] = valid if valid else default_val
         else:
             if saved not in valid_options:
                 st.session_state[key] = default_val
 
-# ETF 공통 섹터 필터 UI 생성 함수 (수정됨: 순수 Python str 변환)
+# ETF 공통 섹터 필터 UI 생성 함수
 def create_sector_filters(prefix, df_source):
-    opts_m = ["전체"] + [str(x) for x in df_source['market'].unique() if pd.notna(x)]
-    opts_a = ["전체"] + [str(x) for x in df_source['asset'].unique() if pd.notna(x)]
-    opts_r = ["전체"] + [str(x) for x in df_source['is_rep'].unique() if pd.notna(x)]
-    opts_d = ["전체"] + [str(x) for x in df_source['deriv'].unique() if pd.notna(x)]
-    opts_t = ["전체"] + [str(x) for x in df_source['tracking'].unique() if pd.notna(x)]
+    opts_m = ["전체"] + list(df_source['market'].unique())
+    opts_a = ["전체"] + list(df_source['asset'].unique())
+    opts_r = ["전체"] + list(df_source['is_rep'].unique())
+    opts_d = ["전체"] + list(df_source['deriv'].unique())
+    opts_t = ["전체"] + list(df_source['tracking'].unique())
     
     sync_state(f'{prefix}_mkt', opts_m, "전체")
     sync_state(f'{prefix}_ast', opts_a, "전체")
@@ -130,6 +129,7 @@ def fetch_csvs_from_gmail():
     if fetched_dfs:
         return pd.concat(fetched_dfs, ignore_index=True)
     return pd.DataFrame()
+
 
 # ----------------------------------------------------------------------
 # 2. 구글 드라이브 원본 CSV 업데이트(업로드) 함수
@@ -272,7 +272,7 @@ def load_data():
     df['LP순매수대금'] = df['LP매수거래대금'] - df['LP매도거래대금']
 
     master_df = pd.DataFrame.from_dict(master_db, orient='index')
-    df['종목코드'] = df['종목코드'].astype(str).str.strip().str.upper().str.replace(' ', '')
+    df['종목코드'] = df['종목코드'].str.strip().str.upper().str.replace(' ', '')
     df['a_code'] = df['종목코드'].map(master_df['a_code']).fillna(df['종목코드'])
 
     master_names = df['종목코드'].map(master_df['name'])
@@ -402,6 +402,7 @@ def get_krx_daily_nav_shares(ticker, start_date, end_date):
 # ----------------------------------------------------------------------
 st.sidebar.header("⚙️ 데이터 관리")
 
+# ✅ 새로 추가된 이메일 즉시 갱신 버튼
 if st.sidebar.button("🔄 최신 데이터 수신 (새로고침)"):
     st.cache_data.clear()
     st.toast("캐시가 초기화되었습니다. 최신 이메일 및 데이터를 수집합니다.", icon="🔄")
@@ -452,8 +453,10 @@ else:
 
 df_filtered = df[(df['거래일자'].dt.date >= start_date) & (df['거래일자'].dt.date <= end_date)].copy()
 
+
+
 # ----------------------------------------------------------------------
-# UI Tabs 구성
+# UI Tabs 구성 (탭 리넘버링 적용됨)
 # ----------------------------------------------------------------------
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "1. 종합 대시보드", 
@@ -467,7 +470,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
 ])
 
 # ==========================================
-# Tab 1: 종합 대시보드
+# Tab 1: 종합 대시보드 (기존 탭 2 내용 하단에 병합)
 # ==========================================
 with tab1:
     st.subheader("📊 시장 핵심 지표 및 추이")
@@ -496,6 +499,7 @@ with tab1:
     st.divider()
     st.write("▼ ETF 섹터 세부 필터")
     
+    # 공통 섹터 필터 적용
     m, a, r, d, t = create_sector_filters('t1', df_filtered)
     df_t1 = apply_sector_filters(df_filtered, m, a, r, d, t)
     
@@ -562,6 +566,7 @@ with tab1:
         else:
             st.warning("선택하신 필터 조건에 해당하는 점유율 데이터가 없습니다.")
             
+        # ---------- 기존 2번 탭(섹터/종목 구분 분석)을 대시보드 하단에 병합 ----------
         st.divider()
         st.subheader("🥧 타겟 조건 회원사 점유율 및 성향 분석 (도넛 차트)")
         
@@ -574,6 +579,7 @@ with tab1:
         agg_df = t1_etf.groupby('회원사명')[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', '추정매매이익']].sum().reset_index()
         agg_df = agg_df[agg_df['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)
         
+        # [신규 추가] 커버 종목수 합산 병합 (유효 거래가 있는 종목 기준)
         cover_cnt = t1_etf[t1_etf['총LP거래대금'] > 0].groupby('회원사명')['종목명'].nunique().reset_index(name='커버종목수')
         agg_df = agg_df.merge(cover_cnt, on='회원사명', how='left').fillna({'커버종목수': 0})
         
@@ -581,11 +587,15 @@ with tab1:
         agg_df['점유율(%)'] = (agg_df['총LP거래대금'] / total_vol) * 100 if total_vol > 0 else 0
         agg_df['거래대금(억)'] = agg_df['총LP거래대금'] / 100_000_000
         agg_df['추정매매손익(백만)'] = agg_df['추정매매이익'] / 1_000_000
+        
+        # [신규 추가] 종목집중도 산출
         agg_df['종목집중도(억/종목)'] = np.where(agg_df['커버종목수'] > 0, agg_df['거래대금(억)'] / agg_df['커버종목수'], 0)
         
         st.write("#### 1️⃣ 회원사 점유율 상세")
+        # 컬럼이 늘어났으므로 좌측 데이터프레임 표의 넓이 비율을 1.2로 확대 배정
         col_t1_1, col_t1_2 = st.columns([1.2, 1])
         with col_t1_1:
+            # 출력 컬럼에 커버종목수, 종목집중도 추가
             show_df = agg_df[['회원사명', '거래대금(억)', '점유율(%)', '커버종목수', '종목집중도(억/종목)', '추정매매손익(백만)']].copy()
             show_df['순위'] = range(1, len(show_df) + 1)
             st.dataframe(show_df.set_index('순위').style.format({
@@ -620,23 +630,24 @@ with tab1:
         if trend_type == "시장 전체 (Total Market)":
             daily_vol = df_t1.groupby('거래일자')['총LP거래대금'].sum().reset_index()
             daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
-            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', title="전체 시장 일별 LP 거래대금 추이", markers=True, render_mode='svg')
+            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', title="전체 시장 일별 LP 거래대금 추이", markers=True)
             st.plotly_chart(fig_t, use_container_width=True)
         elif trend_type == "특정 LP사 (Specific LP)":
             daily_vol = df_t1.groupby(['거래일자', '회원사명'])['총LP거래대금'].sum().reset_index()
             daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
-            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='회원사명', title="선택 LP사별 일별 거래대금 추이", markers=True, render_mode='svg')
+            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='회원사명', title="선택 LP사별 일별 거래대금 추이", markers=True)
             st.plotly_chart(fig_t, use_container_width=True)
         elif trend_type == "특정 운용사 (Specific AMC)":
             daily_vol = df_t1.groupby(['거래일자', 'amc'])['총LP거래대금'].sum().reset_index()
             daily_vol['거래대금(억)'] = daily_vol['총LP거래대금'] / 100_000_000
-            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='amc', title="선택 운용사별 일별 거래대금 추이", markers=True, render_mode='svg')
+            fig_t = px.line(daily_vol, x='거래일자', y='거래대금(억)', color='amc', title="선택 운용사별 일별 거래대금 추이", markers=True)
             st.plotly_chart(fig_t, use_container_width=True)
 
 # ==========================================
-# Tab 2: LP별 분석
+# Tab 2: LP별 분석 (기존 3번 탭)
 # ==========================================
 with tab2:
+    # --- 상단 공통 필터 영역 (LP 및 운용사 다중 선택) ---
     c_top1, c_top2 = st.columns(2)
     
     with c_top1:
@@ -650,11 +661,13 @@ with tab2:
         target_amcs_t2 = st.multiselect("📌 분석 대상 운용사(AMC) 선택 (비워두면 전체 운용사)", amc_list_t2, key='t2_target_amcs')
     
     if target_lp:
+        # 1. 운용사(AMC) 필터 적용 (탭 전체 적용)
         if target_amcs_t2:
             df_t2_base = df_filtered[df_filtered['amc'].isin(target_amcs_t2)]
         else:
             df_t2_base = df_filtered.copy()
             
+        # 2. 해당 LP 데이터 추출
         df_lp = df_t2_base[df_t2_base['회원사명'] == target_lp]
         
         lp_total_amt = df_lp['총LP거래대금'].sum()
@@ -664,10 +677,13 @@ with tab2:
         filter_msg = f"({', '.join(target_amcs_t2)})" if target_amcs_t2 else "(전체 운용사)"
         st.info(f"**{target_lp}** | 해당 기간 {filter_msg} LP 총 거래대금: {lp_total_amt/100_000_000:,.0f} 억원 | 시장 점유율(M/S): {ms:.2f}%")
         
+        # --- 1. 전체 거래 종목 상세 분석 ---
         st.subheader(f"1️⃣ [{target_lp}] 전체 거래 종목 상세 분석 (섹터 필터링 & 추정매매손익)")
         
+        # 📌 하단의 커버리지 표 및 시계열 그래프에서도 동일하게 공유될 섹터 필터
         md, ad, rd, dd, td = create_sector_filters('t2_detail', df_filtered)
         
+        # 섹터 필터 추가 적용
         df_detail = apply_sector_filters(df_lp, md, ad, rd, dd, td)
         df_detail_mkt = apply_sector_filters(df_t2_base, md, ad, rd, dd, td)
         
@@ -675,101 +691,32 @@ with tab2:
         if total_detail_vol > 0:
             detail_etfs = df_detail.groupby('종목명')[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', 'LP매도거래량', 'LP매수거래량']].sum().reset_index()
             detail_etfs = detail_etfs[detail_etfs['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False).reset_index(drop=True)
-            detail_etfs['순위'] = detail_etfs.index + 1
-            detail_etfs['평균매도단가'] = np.where(detail_etfs['LP매도거래량'] > 0, detail_etfs['LP매도거래대금'] / detail_etfs['LP매도거래량'], 0)
-            detail_etfs['평균매수단가'] = np.where(detail_etfs['LP매수거래량'] > 0, detail_etfs['LP매수거래대금'] / detail_etfs['LP매수거래량'], 0)
-            detail_etfs['체결수량(min)'] = detail_etfs[['LP매도거래량', 'LP매수거래량']].min(axis=1)
-            detail_etfs['추정매매이익'] = (detail_etfs['평균매도단가'] - detail_etfs['평균매수단가']) * detail_etfs['체결수량(min)']
-            detail_etfs['거래대금(억)'] = detail_etfs['총LP거래대금'] / 100_000_000
-            detail_etfs['매도대금(억)'] = detail_etfs['LP매도거래대금'] / 100_000_000
-            detail_etfs['매수대금(억)'] = detail_etfs['LP매수거래대금'] / 100_000_000
-            detail_etfs['순매수대금(억)'] = detail_etfs['LP순매수대금'] / 100_000_000
-            detail_etfs['추정매매손익(백만)'] = detail_etfs['추정매매이익'] / 1_000_000
-            detail_etfs['비중(%)'] = (detail_etfs['총LP거래대금'] / total_detail_vol) * 100
-            
-            total_row = pd.DataFrame([{'순위': 0, '종목명': '📊 [총 합계]', '거래대금(억)': detail_etfs['거래대금(억)'].sum(), '매도대금(억)': detail_etfs['매도대금(억)'].sum(), '매수대금(억)': detail_etfs['매수대금(억)'].sum(), '순매수대금(억)': detail_etfs['순매수대금(억)'].sum(), '추정매매손익(백만)': detail_etfs['추정매매손익(백만)'].sum(), '비중(%)': 100.0}])
-            detail_etfs = pd.concat([total_row, detail_etfs], ignore_index=True)
-            
-            st.write(f"해당 필터 조건 거래 종목 수: **{len(detail_etfs)-1:,}개** | 기간 총 거래대금: **{total_detail_vol/100_000_000:,.0f}억원**")
-            show_cols = ['순위', '종목명', '거래대금(억)', '매도대금(억)', '매수대금(억)', '순매수대금(억)', '추정매매손익(백만)', '비중(%)']
-            st.dataframe(detail_etfs[show_cols].set_index('순위').style.format({'거래대금(억)': '{:,.0f}', '매도대금(억)': '{:,.0f}', '매수대금(억)': '{:,.0f}', '순매수대금(억)': '{:,.0f}', '추정매매손익(백만)': '{:,.0f}', '비중(%)': '{:.2f}%'}), use_container_width=True)
-        else:
-            st.warning("선택하신 필터 조건에 해당하는 종목 거래 내역이 없습니다.")
-            
-        st.divider()
-
-        c1, c2 = st.columns(2)
-        
-        with c1:
-            st.write("2️⃣ 운용사(AMC)별 커버리지 및 충성도 (섹터 필터링 연동)")
-            filtered_lp_total = df_detail['총LP거래대금'].sum()
-            
-            if filtered_lp_total > 0:
-                amc_lp = df_detail.groupby('amc')['총LP거래대금'].sum().reset_index()
-                amc_mkt = df_detail_mkt.groupby('amc')['총LP거래대금'].sum()
-                
-                amc_lp['대금(억)'] = amc_lp['총LP거래대금'] / 100_000_000
-                amc_lp['내부비중(%)'] = (amc_lp['총LP거래대금'] / filtered_lp_total) * 100
-                amc_lp['AMC내_MS(%)'] = amc_lp.apply(lambda r: (r['총LP거래대금'] / amc_mkt.get(r['amc'], 1)) * 100 if amc_mkt.get(r['amc'], 0) > 0 else 0, axis=1)
-                
-                st.dataframe(amc_lp[amc_lp['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)[['amc', '대금(억)', '내부비중(%)', 'AMC내_MS(%)']].style.format({'대금(억)': '{:,.0f}', '내부비중(%)': '{:.1f}%', 'AMC내_MS(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
-            else:
-                st.warning("선택하신 상단 필터 조건에 해당하는 LP 거래 내역이 없습니다.")
-                
-        with c2:
-            st.write("3️⃣ 섹터별 상세 거래 내역 (5단계 분류)")
-            market_sector = df_t2_base.groupby('category_key')['총LP거래대금'].sum()
-            lp_sector = df_lp.groupby('category_key')['총LP거래대금'].sum().reset_index()
-            
-            lp_sector['내부비중(%)'] = (lp_sector['총LP거래대금'] / lp_total_amt) * 100 if lp_total_amt > 0 else 0
-            lp_sector['섹터내_MS(%)'] = lp_sector.apply(lambda r: (r['총LP거래대금'] / market_sector.get(r['category_key'], 1)) * 100, axis=1)
-            lp_sector['대금(억)'] = lp_sector['총LP거래대금'] / 100_000_000
-            
-            st.dataframe(lp_sector[lp_sector['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)[['category_key', '대금(억)', '내부비중(%)', '섹터내_MS(%)']].style.format({'대금(억)': '{:,.0f}', '내부비중(%)': '{:.1f}%', '섹터내_MS(%)': '{:.1f}%'}), use_container_width=True, hide_index=True)
-
-        st.divider()
-
-        st.subheader(f"4️⃣ [{target_lp}] 운용사별 일별 거래대금 시계열 추이")
-        st.write("*(위의 운용사 복수 선택 및 섹터 필터가 모두 반영된 결과입니다.)*")
-        
-        if not df_detail.empty:
-            daily_amc_vol = df_detail.groupby(['거래일자', 'amc'])['총LP거래대금'].sum().reset_index()
-            daily_amc_vol['거래대금(억)'] = daily_amc_vol['총LP거래대금'] / 100_000_000
-            
-            fig_t2_ts = px.line(
-                daily_amc_vol, 
-                x='거래일자', 
-                y='거래대금(억)', 
-                color='amc',
-                title=f"{target_lp}의 일별 운용사(AMC) 거래대금 추이", 
-                markers=True,
-                labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', 'amc': '운용사'},
-                render_mode='svg'
-            )
-            st.plotly_chart(fig_t2_ts, use_container_width=True)
-        else:
-            st.warning("조건에 해당하는 시계열 그래프 데이터가 없습니다.")
 
 # ==========================================
-# Tab 3: ETF별 분석
+# Tab 3: ETF별 분석 (기존 4번 탭)
 # ==========================================
 with tab3:
     st.subheader("🔍 특정 ETF 종목의 LP 점유율 및 시계열 분석")
     etf_list = df_filtered.groupby(['a_code', '종목명'])['총LP거래대금'].sum().sort_values(ascending=False).reset_index()
     etf_options = [f"[{row['a_code']}] {row['종목명']}" for _, row in etf_list.iterrows()]
     
+    # 복수 선택을 위해 초기값을 리스트 형태로 설정
     default_sel = [etf_options[0]] if etf_options else []
     sync_state('t3_etf_sel', etf_options, default_sel)
     
+    # Selectbox에서 Multiselect로 변경
     selected_etf_strs = st.multiselect("종목 검색 (다중 선택 가능, 거래대금 순 배열):", etf_options, key='t3_etf_sel')
     
     if selected_etf_strs:
+        # 선택된 복수의 단축코드 추출
         a_code_targets = [s.split("]")[0][1:] for s in selected_etf_strs]
         df_target = df_filtered[df_filtered['a_code'].isin(a_code_targets)]
         
+        # 합계 총 거래대금
         tot_target = df_target['총LP거래대금'].sum()
         st.write(f"**선택 ETF(합계) 기간 총 거래대금:** {tot_target/100_000_000:,.0f} 억원")
         
+        # 1. 회원사 및 종목별로 그룹화하여 개별 ETF의 추정매매손익을 먼저 정확히 계산
         etf_level_df = df_target.groupby(['회원사명', '종목명'])[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', 'LP매도거래량', 'LP매수거래량']].sum().reset_index()
         
         etf_level_df['평균매도단가'] = np.where(etf_level_df['LP매도거래량'] > 0, etf_level_df['LP매도거래대금'] / etf_level_df['LP매도거래량'], 0)
@@ -777,6 +724,7 @@ with tab3:
         etf_level_df['체결수량(min)'] = etf_level_df[['LP매도거래량', 'LP매수거래량']].min(axis=1)
         etf_level_df['추정매매이익'] = (etf_level_df['평균매도단가'] - etf_level_df['평균매수단가']) * etf_level_df['체결수량(min)']
         
+        # 2. 회원사 기준으로 최종 합산 (개별 종목에서 구한 추정매매손익을 합산)
         target_lp_df = etf_level_df.groupby('회원사명')[['총LP거래대금', 'LP매도거래대금', 'LP매수거래대금', 'LP순매수대금', '추정매매이익']].sum().reset_index()
         target_lp_df = target_lp_df[target_lp_df['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)
         
@@ -793,6 +741,7 @@ with tab3:
 
         st.divider()
 
+        # --- 3. 선택 ETF 시계열 추이 차트 (종목별) ---
         st.subheader("📉 선택 ETF 일별 거래대금 추이 (종목별)")
         
         daily_etf_vol = df_target.groupby(['거래일자', '종목명'])['총LP거래대금'].sum().reset_index()
@@ -806,23 +755,31 @@ with tab3:
             title="선택 종목별 일별 거래대금 추이", 
             markers=True,
             labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', '종목명': 'ETF 종목'},
-            render_mode='svg'
+            render_mode='svg'  # 🔥 WebGL 에러 방지용 옵션 추가
         )
         st.plotly_chart(fig_t3, use_container_width=True)
 
         st.divider()
 
+        # --- 4. 선택 ETF 합계 시계열 추이 차트 (LP사별) 수정 ---
         st.subheader("📉 선택 ETF 합계 일별 거래대금 추이 (LP사별)")
         st.write("*(선택을 비워두면 관련된 전체 LP사가 조회됩니다.)*")
         
+        # 해당 ETF들을 거래한 전체 LP사 목록 추출 (거래대금 순 정렬)
         lp_options_t3 = target_lp_df['회원사명'].tolist()
+        
+        # 기본값을 빈 리스트([])로 설정하여 처음엔 아무것도 선택되지 않게 함
         sync_state('t3_lp_sel', lp_options_t3, [])
         selected_lps_t3 = st.multiselect("차트에 표시할 LP사 선택 (선택 해제 시 전체 조회):", lp_options_t3, key='t3_lp_sel')
         
+        # 선택된 항목이 없으면 전체 LP 리스트를 타겟으로 지정
         target_lps_t3 = selected_lps_t3 if selected_lps_t3 else lp_options_t3
         
         if target_lps_t3:
+            # 타겟팅된 LP사로 데이터 필터링
             df_target_lp = df_target[df_target['회원사명'].isin(target_lps_t3)]
+            
+            # 날짜와 회원사 기준으로 합계 도출
             daily_lp_vol = df_target_lp.groupby(['거래일자', '회원사명'])['총LP거래대금'].sum().reset_index()
             daily_lp_vol['거래대금(억)'] = daily_lp_vol['총LP거래대금'] / 100_000_000
             
@@ -834,7 +791,7 @@ with tab3:
                 title=f"선택 종목(합산)의 LP사별 일별 거래대금 추이 ({len(target_lps_t3)}개사)", 
                 markers=True,
                 labels={'거래대금(억)': '거래대금(억원)', '거래일자': '날짜', '회원사명': 'LP사'},
-                render_mode='svg'
+                render_mode='svg'  # 🔥 WebGL 에러 방지용 옵션 추가
             )
             st.plotly_chart(fig_t3_lp, use_container_width=True)
 
@@ -842,7 +799,7 @@ with tab3:
         st.warning("분석할 ETF 종목을 하나 이상 선택해주세요.")
 
 # ==========================================
-# Tab 4: 운용사별 분석
+# Tab 4: 운용사별 분석 (기존 5번 탭)
 # ==========================================
 with tab4:
     st.subheader("🏢 운용사(AMC)별 ETF 및 파트너 LP 분석")
@@ -908,7 +865,7 @@ with tab4:
             st.warning("선택하신 필터 조건에 해당하는 거래 내역이 없습니다.")
 
 # ==========================================
-# Tab 5: 종목 집중도 분석
+# Tab 5: 종목 집중도 분석 (기존 6번 탭)
 # ==========================================
 with tab5:
     st.subheader("🎯 종목 집중도 (HHI 및 Top-N 의존도)")
@@ -1013,7 +970,7 @@ with tab5:
             st.warning("선택하신 조건 및 LP사에 해당하는 거래 내역이 없습니다.")
 
 # ==========================================
-# Tab 6: 시장 전체 거래대금 (수정 완료)
+# Tab 6: 시장 전체 거래대금 (기존 7번 탭)
 # ==========================================
 with tab6:
     st.subheader("🇰🇷 KRX 공식 시장 거래대금 분석 (Open API 연동)")
@@ -1022,8 +979,7 @@ with tab6:
     m6, a6, r6, d6, t6 = create_sector_filters('t6', df_filtered)
     df_t6 = apply_sector_filters(df_filtered, m6, a6, r6, d6, t6)
     
-    # 예외 처리 추가: str 변환 및 NaN 제거
-    target_etfs = [str(code).replace('A', '') for code in df_t6['a_code'].dropna().unique()]
+    target_etfs = [code.replace('A', '') for code in df_t6['a_code'].unique()]
     total_found_cnt = len(target_etfs)
     st.info(f"선택된 필터 조건 대상 ETF 종목 수: **{total_found_cnt} 개**")
     
@@ -1034,7 +990,7 @@ with tab6:
             st.warning("선택된 종목이 없습니다. 필터를 변경해주세요.")
         else:
             st.warning("⏳ **API 밴(Ban) 방지를 위해 데이터를 안전한 속도로 가져오고 있습니다. 로딩 중에 버튼을 여러 번 누르지 마세요! (최대 30초 소요)**")
-            with st.spinner("KRX Open API에서 데이터를 실시간 수집 중입니다..."):
+            with st.spinner("KRX Open API에서 데이터를 실시간 수집 중입니다... (🚨 과부하 방지를 위해 연타 금지)"):
                 try:
                     tickers_tuple = tuple(target_etfs)
                     daily_market_val = get_krx_open_api_market_data(tickers_tuple, start_date, end_date)
@@ -1051,9 +1007,7 @@ with tab6:
                         merged_df['LP관여율(%)'] = np.where(merged_df['시장거래대금'] > 0, (merged_df['LP거래대금'] / merged_df['시장거래대금']) * 100, 0)
                         merged_df = merged_df.reset_index().rename(columns={'거래일자': '날짜', 'index': '날짜'}) 
                         merged_df['날짜'] = pd.to_datetime(merged_df['날짜']).dt.date
-                        
-                        # render_mode='svg' 옵션 적용으로 Plotly WebGL 오류 방지
-                        fig_t6 = px.line(merged_df, x='날짜', y=['시장거래대금(억)', 'LP거래대금(억)'], title="선택 섹터 KRX 공식 시장 거래대금 vs LP 총 거래대금(조정됨) 추이 (단위: 억원)", markers=True, labels={'value': '거래대금(억)', 'variable': '구분'}, render_mode='svg')
+                        fig_t6 = px.line(merged_df, x='날짜', y=['시장거래대금(억)', 'LP거래대금(억)'], title="선택 섹터 KRX 공식 시장 거래대금 vs LP 총 거래대금(조정됨) 추이 (단위: 억원)", markers=True, labels={'value': '거래대금(억)', 'variable': '구분'})
                         st.plotly_chart(fig_t6, use_container_width=True)
                         fig_t6_ratio = px.bar(merged_df, x='날짜', y='LP관여율(%)', title="KRX 공식 시장 거래대금 대비 LP 관여율 (%)", text=merged_df['LP관여율(%)'].apply(lambda x: f"{x:.1f}%"), color_discrete_sequence=['#ff9f43'])
                         fig_t6_ratio.update_traces(textposition='outside')
@@ -1063,7 +1017,7 @@ with tab6:
                     st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
 
 # ==========================================
-# Tab 7: 설정/환매 추이 추정
+# Tab 7: 설정/환매 추이 추정 (기존 8번 탭)
 # ==========================================
 with tab7:
     st.subheader("🔄 ETF별 설정/환매 추이 추정")
@@ -1078,7 +1032,7 @@ with tab7:
     target_amcs_t7 = st.multiselect("운용사(AMC) 다중 선택 (비워두면 조건 내 전체 종목 조회)", amc_list_t7, key='t7_amc')
     
     if target_amcs_t7: df_t7 = df_t7[df_t7['amc'].isin(target_amcs_t7)]
-    target_etfs_t7 = [str(code).replace('A', '') for code in df_t7['a_code'].dropna().unique()]
+    target_etfs_t7 = [code.replace('A', '') for code in df_t7['a_code'].unique()]
     
     st.divider()
     
@@ -1159,7 +1113,7 @@ with tab7:
     st.divider()
     st.subheader("🔍 특정 ETF 일자별 설정/환매 상세 분석")
     etf_options_t7 = df_t7[['a_code', '종목명']].drop_duplicates()
-    etf_options_list = ["선택 안함"] + [f"[{str(row['a_code']).replace('A', '')}] {row['종목명']}" for _, row in etf_options_t7.iterrows()]
+    etf_options_list = ["선택 안함"] + [f"[{row['a_code'].replace('A', '')}] {row['종목명']}" for _, row in etf_options_t7.iterrows()]
     
     sync_state('t7_etf_sel', etf_options_list, "선택 안함")
     selected_etf_t7 = st.selectbox("일자별 분석을 진행할 ETF를 선택하세요:", etf_options_list, key='t7_etf_sel')
@@ -1204,7 +1158,7 @@ with tab7:
                         st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# Tab 8: NAV 괴리율 조회
+# Tab 8: NAV 괴리율 조회 (기존 9번 탭)
 # ==========================================
 with tab8:
     st.subheader("📐 ETF NAV vs 종가 괴리(Disparity) 분석")
@@ -1225,7 +1179,7 @@ with tab8:
     target_amcs_t8 = st.multiselect("운용사(AMC) 다중 선택 (비워두면 조건 내 전체 종목 조회)", amc_list_t8, key='t8_amc')
     
     if target_amcs_t8: df_t8 = df_t8[df_t8['amc'].isin(target_amcs_t8)]
-    target_etfs_t8 = [str(code).replace('A', '') for code in df_t8['a_code'].dropna().unique()]
+    target_etfs_t8 = [code.replace('A', '') for code in df_t8['a_code'].unique()]
     
     st.divider()
     
