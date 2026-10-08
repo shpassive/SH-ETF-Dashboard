@@ -754,7 +754,8 @@ with tab2:
                 '추정매매손익(백만)': '{:,.0f}', 
                 '비중(%)': '{:.2f}%'
             }
-            st.dataframe(detail_etfs[show_cols].set_index('순위').style.format(format_dict, na_rep='-'), use_container_width=True)
+            # 🔥 height=750 을 추가하여 세로 길이를 대폭 확장했습니다 (약 20개 행 이상 표시)
+            st.dataframe(detail_etfs[show_cols].set_index('순위').style.format(format_dict, na_rep='-'), use_container_width=True, height=750)
         else:
             st.warning("선택하신 필터 조건에 해당하는 종목 거래 내역이 없습니다.")
             
@@ -814,7 +815,6 @@ with tab2:
             st.plotly_chart(fig_t2_ts, use_container_width=True)
         else:
             st.warning("조건에 해당하는 시계열 그래프 데이터가 없습니다.")
-
 
 # ==========================================
 # Tab 3: ETF별 분석 (기존 4번 탭)
