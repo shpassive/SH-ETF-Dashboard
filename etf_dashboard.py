@@ -837,7 +837,22 @@ with tab2:
 with tab3:
     st.subheader("🔍 특정 ETF 종목의 LP 점유율 및 시계열 분석")
     etf_list = df_filtered.groupby(['a_code', '종목명'])['총LP거래대금'].sum().sort_values(ascending=False).reset_index()
-    etf_options = [f"[{row['a_code']}] {row['종목명']}" for _, row in etf_list.iterrows()]
+    
+    # [수정] a_code의 0이 잘리는 문제(A69500 -> A069500) 해결을 위한 매핑 딕셔너리 생성
+    etf_options_map = {}
+    for _, row in etf_list.iterrows():
+        orig_code = str(row['a_code'])
+        # A로 시작하는 경우 뒤의 숫자 부분을 6자리로 zfill 처리
+        if orig_code.startswith('A'):
+            display_code = 'A' + orig_code[1:].zfill(6)
+        else:
+            display_code = orig_code.zfill(6) if orig_code.isdigit() else orig_code
+            
+        display_str = f"[{display_code}] {row['종목명']}"
+        # 화면 표시용 텍스트(예: [A069500] KODEX 200)를 Key로, 원본 코드를 Value로 저장
+        etf_options_map[display_str] = orig_code
+
+    etf_options = list(etf_options_map.keys())
     
     # 복수 선택을 위해 초기값을 리스트 형태로 설정
     default_sel = [etf_options[0]] if etf_options else []
@@ -847,8 +862,8 @@ with tab3:
     selected_etf_strs = st.multiselect("종목 검색 (다중 선택 가능, 거래대금 순 배열):", etf_options, key='t3_etf_sel')
     
     if selected_etf_strs:
-        # 선택된 복수의 단축코드 추출
-        a_code_targets = [s.split("]")[0][1:] for s in selected_etf_strs]
+        # 선택된 복수의 단축코드 추출 (매핑 딕셔너리에서 원본 a_code 역추출)
+        a_code_targets = [etf_options_map[s] for s in selected_etf_strs]
         df_target = df_filtered[df_filtered['a_code'].isin(a_code_targets)]
         
         # 합계 총 거래대금
@@ -900,7 +915,7 @@ with tab3:
 
         st.divider()
 
-        # --- 4. 선택 ETF 합계 시계열 추이 차트 (LP사별) 수정 ---
+        # --- 4. 선택 ETF 합계 시계열 추이 차트 (LP사별) ---
         st.subheader("📉 선택 ETF 합계 일별 거래대금 추이 (LP사별)")
         st.write("*(선택을 비워두면 관련된 전체 LP사가 조회됩니다.)*")
         
