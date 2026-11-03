@@ -978,13 +978,20 @@ with tab4:
                 st.write("### 🥇 LP사별 거래대금 및 M/S 비중")
                 lp_ms_df = df_amc.groupby('회원사명')['총LP거래대금'].sum().reset_index()
                 lp_ms_df = lp_ms_df[lp_ms_df['총LP거래대금'] > 0].sort_values('총LP거래대금', ascending=False)
+                
+                # [신규 추가] 커버 종목수 계산 및 병합 (유효 거래대금이 있는 종목 기준)
+                cover_cnt = df_amc[df_amc['총LP거래대금'] > 0].groupby('회원사명')['종목명'].nunique().reset_index(name='커버종목수')
+                lp_ms_df = lp_ms_df.merge(cover_cnt, on='회원사명', how='left').fillna({'커버종목수': 0})
+                
                 lp_ms_df['거래대금(억)'] = lp_ms_df['총LP거래대금'] / 100_000_000
                 lp_ms_df['M/S(%)'] = (lp_ms_df['총LP거래대금'] / amc_tot_vol) * 100
                 
+                # 출력 컬럼에 커버종목수 추가
                 st.dataframe(
-                    lp_ms_df[['회원사명', '거래대금(억)', 'M/S(%)']].style.format({
+                    lp_ms_df[['회원사명', '거래대금(억)', 'M/S(%)', '커버종목수']].style.format({
                         '거래대금(억)': '{:,.0f}',
-                        'M/S(%)': '{:.2f}%'
+                        'M/S(%)': '{:.2f}%',
+                        '커버종목수': '{:,.0f}'
                     }),
                     use_container_width=True, hide_index=True
                 )
